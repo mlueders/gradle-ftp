@@ -1,0 +1,26 @@
+buildscript {
+	repositories {
+		jcenter()
+	}
+	dependencies { classpath 'com.bancvue:gradle-core:1.1' }
+}
+
+apply plugin: "com.bancvue.core-oss"
+
+repositories {
+	jcenter()
+}
+
+dependencies {
+	compile gradleApi()
+
+	testCompile 'com.bancvue:gradle-core-test:1.1'
+	testCompile('org.spockframework:spock-core:0.7-groovy-2.0') {
+		exclude group: 'org.codehaus.groovy'
+	}
+}
+
+license {
+	ext.name = "Mike Lueders"
+	skipExistingHeaders true
+}
