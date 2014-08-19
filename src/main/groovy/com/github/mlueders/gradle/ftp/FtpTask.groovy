@@ -3,6 +3,7 @@ package com.github.mlueders.gradle.ftp
 import groovy.util.logging.Slf4j
 
 import java.text.SimpleDateFormat
+import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPClientConfig
 import org.apache.commons.net.ftp.FTPFile
@@ -41,14 +42,57 @@ import org.apache.tools.ant.util.VectorSet
  */
 @Slf4j
 public class FtpTask {
-    protected static final int SEND_FILES = 0
-    protected static final int GET_FILES = 1
-    protected static final int DEL_FILES = 2
-    protected static final int LIST_FILES = 3
-    protected static final int MK_DIR = 4
-    protected static final int CHMOD = 5
-    protected static final int RM_DIR = 6
-    protected static final int SITE_CMD = 7
+
+	/**
+	 * an action to perform, one of
+	 * "send", "put", "recv", "get", "del", "delete", "list", "mkdir", "chmod",
+	 * "rmdir"
+	 */
+	public static enum Action {
+		SEND_FILES("sending", "sent", "files"),
+		GET_FILES("getting", "retrieved", "files"),
+		DEL_FILES("deleting", "deleted", "files"),
+		LIST_FILES("listing", "listed", "files"),
+		MK_DIR("making directory", "created directory", "directory"),
+		CHMOD("chmod", "mode changed", "files"),
+		RM_DIR("removing", "removed", "directories"),
+		SITE_CMD("site", "site command executed", "site command")
+
+		private String actionString;
+		private String completedString;
+		private String targetString;
+
+		private Action(String actionString, String completedString, String targetString) {
+			this.actionString = actionString;
+			this.completedString = completedString;
+			this.targetString = targetString;
+		}
+
+		String getActionString() {
+			return actionString
+		}
+
+		String getCompletedString() {
+			return completedString
+		}
+
+		String getTargetString() {
+			return targetString
+		}
+	}
+
+
+
+	/** Default port for FTP */
+	public static final int DEFAULT_FTP_PORT = 21
+
+	FTPClientConfig clientConfig
+
+
+
+
+
+
     /** return code of ftp */
     private static final int CODE_521 = 521
     private static final int CODE_550 = 550
@@ -61,9 +105,6 @@ public class FtpTask {
     /** Date formatter used in logging, note not thread safe! */
     private static final SimpleDateFormat TIMESTAMP_LOGGING_SDF =
         new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-
-    /** Default port for FTP */
-    public static final int DEFAULT_FTP_PORT = 21
 
     private static final FileUtils FILE_UTILS = FileUtils.getFileUtils()
 
@@ -80,7 +121,7 @@ public class FtpTask {
     private long timeDiffMillis = 0
     private long granularityMillis = 0L
     private boolean timeDiffAuto = false
-    private int action = SEND_FILES
+    private Action action = Action.SEND_FILES
     private Vector filesets = new Vector()
     private Set dirCache = new HashSet()
     private int transferred = 0
@@ -92,51 +133,11 @@ public class FtpTask {
     private boolean preserveLastModified = false
     private String chmod = null
     private String umask = null
-    private FTPSystemType systemTypeKey = FTPSystemType.getDefault()
-    private String defaultDateFormatConfig = null
-    private String recentDateFormatConfig = null
-    private LanguageCode serverLanguageCodeConfig = LanguageCode.getDefault()
-    private String serverTimeZoneConfig = null
-    private String shortMonthNamesConfig = null
     private Granularity timestampGranularity = Granularity.getDefault()
-    private boolean isConfigurationSet = false
     private int retriesAllowed = 0
     private String siteCommand = null
     private String initialSiteCommand = null
     private boolean enableRemoteVerification = true
-
-    protected static final String[] ACTION_STRS = [
-        "sending",
-        "getting",
-        "deleting",
-        "listing",
-        "making directory",
-        "chmod",
-        "removing",
-        "site"
-    ]
-
-    protected static final String[] COMPLETED_ACTION_STRS = [
-        "sent",
-        "retrieved",
-        "deleted",
-        "listed",
-        "created directory",
-        "mode changed",
-        "removed",
-        "site command executed"
-    ]
-
-    protected static final String[] ACTION_TARGET_STRS = [
-        "files",
-        "files",
-        "files",
-        "files",
-        "directory",
-        "files",
-        "directories",
-        "site command"
-    ]
 
     /**
      * internal class providing a File-like interface to some of the information
@@ -1337,32 +1338,6 @@ public class FtpTask {
      * Sets the FTP action to be taken. Currently accepts "put", "get", "del",
      * "mkdir", "chmod", "list", and "site".
      *
-     * @deprecated since 1.5.x.
-     *             setAction(String) is deprecated and is replaced with
-     *      setAction(FTP.Action) to make Ant's Introspection mechanism do the
-     *      work and also to encapsulate operations on the type in its own
-     *      class.
-     * @ant.attribute ignore="true"
-     *
-     * @param action the FTP action to be performed.
-     *
-     * @throws BuildException if the action is not a valid action.
-     */
-    public void setAction(String action) throws BuildException {
-	    log.info("DEPRECATED - The setAction(String) method has been deprecated."
-            + " Use setAction(FTP.Action) instead.")
-
-        Action a = new Action()
-
-        a.setValue(action)
-        this.action = a.getAction()
-    }
-
-
-    /**
-     * Sets the FTP action to be taken. Currently accepts "put", "get", "del",
-     * "mkdir", "chmod", "list", and "site".
-     *
      * @param action the FTP action to be performed.
      *
      * @throws BuildException if the action is not a valid action.
@@ -1406,90 +1381,16 @@ public class FtpTask {
         this.ignoreNoncriticalErrors = ignoreNoncriticalErrors
     }
 
-    private void configurationHasBeenSet() {
-        this.isConfigurationSet = true
-    }
 
-    /**
-     * Sets the systemTypeKey attribute.
-     * Method for setting <code>FTPClientConfig</code> remote system key.
-     *
-     * @param systemKey the key to be set - BUT if blank
-     * the default value of null (which signifies "autodetect") will be kept.
-     * @see org.apache.commons.net.ftp.FTPClientConfig
-     */
-    public void setSystemTypeKey(FTPSystemType systemKey) {
-        if (systemKey != null && !systemKey.getValue().equals("")) {
-            this.systemTypeKey = systemKey
-            configurationHasBeenSet()
-        }
-    }
 
-    /**
-     * Sets the defaultDateFormatConfig attribute.
-     * @param defaultDateFormat configuration to be set, unless it is
-     * null or empty string, in which case ignored.
-     * @see org.apache.commons.net.ftp.FTPClientConfig
-     */
-    public void setDefaultDateFormatConfig(String defaultDateFormat) {
-        if (defaultDateFormat != null && !defaultDateFormat.equals("")) {
-            this.defaultDateFormatConfig = defaultDateFormat
-            configurationHasBeenSet()
-        }
-    }
 
-    /**
-     * Sets the recentDateFormatConfig attribute.
-     * @param recentDateFormat configuration to be set, unless it is
-     * null or empty string, in which case ignored.
-     * @see org.apache.commons.net.ftp.FTPClientConfig
-     */
-    public void setRecentDateFormatConfig(String recentDateFormat) {
-        if (recentDateFormat != null && !recentDateFormat.equals("")) {
-            this.recentDateFormatConfig = recentDateFormat
-            configurationHasBeenSet()
-        }
-    }
 
-    /**
-     * Sets the serverLanguageCode attribute.
-     * @param serverLanguageCode configuration to be set, unless it is
-     * null or empty string, in which case ignored.
-     * @see org.apache.commons.net.ftp.FTPClientConfig
-     */
-    public void setServerLanguageCodeConfig(LanguageCode serverLanguageCode) {
-        if (serverLanguageCode != null && !"".equals(serverLanguageCode.getValue())) {
-            this.serverLanguageCodeConfig = serverLanguageCode
-            configurationHasBeenSet()
-        }
-    }
 
-    /**
-     * Sets the serverTimeZoneConfig attribute.
-     * @param serverTimeZoneId configuration to be set, unless it is
-     * null or empty string, in which case ignored.
-     * @see org.apache.commons.net.ftp.FTPClientConfig
-     */
-    public void setServerTimeZoneConfig(String serverTimeZoneId) {
-        if (serverTimeZoneId != null && !serverTimeZoneId.equals("")) {
-            this.serverTimeZoneConfig = serverTimeZoneId
-            configurationHasBeenSet()
-        }
-    }
 
-    /**
-     * Sets the shortMonthNamesConfig attribute
-     *
-     * @param shortMonthNames configuration to be set, unless it is
-     * null or empty string, in which case ignored.
-     * @see org.apache.commons.net.ftp.FTPClientConfig
-     */
-    public void setShortMonthNamesConfig(String shortMonthNames) {
-        if (shortMonthNames != null && !shortMonthNames.equals("")) {
-            this.shortMonthNamesConfig = shortMonthNames
-            configurationHasBeenSet()
-        }
-    }
+
+
+
+
 
 
 
@@ -1498,8 +1399,7 @@ public class FtpTask {
      * Default is 0 - try once and if failure then give up.
      *
      * @param retriesAllowed number of retries to allow.  -1 means
-     * keep trying forever. "forever" may also be specified as a
-     * synonym for -1.
+     * keep trying forever.
      */
     public void setRetriesAllowed(String retriesAllowed) {
         if ("FOREVER".equalsIgnoreCase(retriesAllowed)) {
@@ -1522,12 +1422,6 @@ public class FtpTask {
             }
 
         }
-    }
-    /**
-     * @return Returns the systemTypeKey.
-     */
-    public String getSystemTypeKey() {
-        return systemTypeKey.getValue()
     }
     /**
      * @return Returns the defaultDateFormatConfig.
@@ -1620,34 +1514,19 @@ public class FtpTask {
             throw new BuildException("password attribute must be set!")
         }
 
-        if ((action == LIST_FILES) && (listing == null)) {
-            throw new BuildException("listing attribute must be set for list "
-                                     + "action!")
+        if ((action == Action.LIST_FILES) && (listing == null)) {
+            throw new BuildException("listing attribute must be set for list action!")
         }
 
-        if (action == MK_DIR && remotedir == null) {
-            throw new BuildException("remotedir attribute must be set for "
-                                     + "mkdir action!")
+        if (action == Action.MK_DIR && remotedir == null) {
+            throw new BuildException("remotedir attribute must be set for mkdir action!")
         }
 
-        if (action == CHMOD && chmod == null) {
-            throw new BuildException("chmod attribute must be set for chmod "
-                                     + "action!")
+        if (action == Action.CHMOD && chmod == null) {
+            throw new BuildException("chmod attribute must be set for chmod action!")
         }
-        if (action == SITE_CMD && siteCommand == null) {
-            throw new BuildException("sitecommand attribute must be set for site "
-                                     + "action!")
-        }
-
-
-        if (this.isConfigurationSet) {
-            try {
-                Class.forName("org.apache.commons.net.ftp.FTPClientConfig")
-            } catch (ClassNotFoundException e) {
-                throw new BuildException(
-                                         "commons-net.jar >= 1.4.0 is required for at least one"
-                                         + " of the attributes specified.")
-            }
+        if (action == Action.SITE_CMD && siteCommand == null) {
+            throw new BuildException("sitecommand attribute must be set for site action!")
         }
     }
 
@@ -1659,8 +1538,7 @@ public class FtpTask {
      * @param descr a description of the command that is being run.
      * @throws IOException if there is a problem.
      */
-    protected void executeRetryable(RetryHandler h, Retryable r, String descr)
-        throws IOException {
+    protected void executeRetryable(RetryHandler h, Retryable r, String descr) throws IOException {
         h.execute(r, descr)
     }
 
@@ -1680,7 +1558,7 @@ public class FtpTask {
     protected int transferFiles(final FTPClient ftp, FileSet fs)
         throws IOException, BuildException {
         DirectoryScanner ds
-        if (action == SEND_FILES) {
+        if (action == Action.SEND_FILES) {
             ds = fs.getDirectoryScanner(getProject())
         } else {
             ds = new FTPDirectoryScanner(ftp)
@@ -1690,7 +1568,7 @@ public class FtpTask {
         }
 
         String[] dsfiles = null
-        if (action == RM_DIR) {
+        if (action == Action.RM_DIR) {
             dsfiles = ds.getIncludedDirectories()
         } else {
             dsfiles = ds.getIncludedFiles()
@@ -1698,11 +1576,11 @@ public class FtpTask {
         String dir = null
 
         if ((ds.getBasedir() == null)
-            && ((action == SEND_FILES) || (action == GET_FILES))) {
+            && ((action == Action.SEND_FILES) || (action == Action.GET_FILES))) {
             throw new BuildException("the dir attribute must be set for send "
                                      + "and get actions")
         } else {
-            if ((action == SEND_FILES) || (action == GET_FILES)) {
+            if ((action == Action.SEND_FILES) || (action == Action.GET_FILES)) {
                 dir = ds.getBasedir().getAbsolutePath()
             }
         }
@@ -1711,7 +1589,7 @@ public class FtpTask {
         BufferedWriter bw = null
 
         try {
-            if (action == LIST_FILES) {
+            if (action == Action.LIST_FILES) {
                 File pd = listing.getParentFile()
 
                 if (!pd.exists()) {
@@ -1720,7 +1598,7 @@ public class FtpTask {
                 bw = new BufferedWriter(new FileWriter(listing))
             }
             RetryHandler h = new RetryHandler(this.retriesAllowed, this)
-            if (action == RM_DIR) {
+            if (action == Action.RM_DIR) {
                 // to remove directories, start by the end of the list
                 // the trunk does not let itself be removed before the leaves
                 for (int i = dsfiles.length - 1; i >= 0; i--) {
@@ -1743,19 +1621,19 @@ public class FtpTask {
                     executeRetryable(h, new Retryable() {
                             public void execute() throws IOException {
                                 switch (action) {
-                                case SEND_FILES:
+                                case Action.SEND_FILES:
                                     sendFile(ftp, fdir, dsfile)
                                     break
-                                case GET_FILES:
+                                case Action.GET_FILES:
                                     getFile(ftp, fdir, dsfile)
                                     break
-                                case DEL_FILES:
+                                case Action.DEL_FILES:
                                     delFile(ftp, dsfile)
                                     break
-                                case LIST_FILES:
+                                case Action.LIST_FILES:
                                     listFile(ftp, fbw, dsfile)
                                     break
-                                case CHMOD:
+                                case Action.CHMOD:
                                     doSiteCommand(ftp, "chmod " + chmod
                                                   + " " + resolveFile(dsfile))
                                     transferred++
@@ -1784,8 +1662,7 @@ public class FtpTask {
      * @throws IOException if there is a problem reading a file
      * @throws BuildException if there is a problem in the configuration.
      */
-    protected void transferFiles(FTPClient ftp)
-        throws IOException, BuildException {
+    protected void transferFiles(FTPClient ftp) throws IOException, BuildException {
         transferred = 0
         skipped = 0
 
@@ -1803,9 +1680,9 @@ public class FtpTask {
             }
         }
 
-        log.info("${transferred} ${ACTION_TARGET_STRS[action]} ${COMPLETED_ACTION_STRS[action]}")
+        log.info("${transferred} ${action.targetString} ${action.completedString}")
         if (skipped != 0) {
-            log.info("${skipped} ${ACTION_TARGET_STRS[action]} were not successfully ${COMPLETED_ACTION_STRS[action]}")
+            log.info("${skipped} ${action.targetString} were not successfully ${action.completedString}")
         }
     }
 
@@ -1985,7 +1862,7 @@ public class FtpTask {
             // If we are sending files, then assume out of date.
             // If we are getting files, then throw an error
 
-            if (action == SEND_FILES) {
+            if (action == Action.SEND_FILES) {
                 log.trace("Could not date test remote file: ${remoteFile} assuming out of date.")
                 return false
             } else {
@@ -2021,7 +1898,7 @@ public class FtpTask {
         }
 	    log.trace(msg.toString())
 
-        if (this.action == SEND_FILES) {
+        if (this.action == Action.SEND_FILES) {
             return adjustedRemoteTimestamp >= localTimestamp
         } else {
             return localTimestamp >= adjustedRemoteTimestamp
@@ -2314,11 +2191,8 @@ public class FtpTask {
                     //  to indicate that an attempt to create a directory has
                     //  failed because the directory already exists.
                     int rc = ftp.getReplyCode()
-                    if (!(ignoreNoncriticalErrors
-                          && (rc == CODE_550 || rc == CODE_553
-                              || rc == CODE_521))) {
-                        throw new BuildException("could not create directory: "
-                                                 + ftp.getReplyString())
+                    if (!(ignoreNoncriticalErrors && (rc == CODE_550 || rc == CODE_553 || rc == CODE_521))) {
+                        throw new BuildException("could not create directory: ${ftp.getReplyString()}")
                     }
                     if (verbose) {
                         log.info("Directory already exists")
@@ -2345,10 +2219,8 @@ public class FtpTask {
     private void handleMkDirFailure(FTPClient ftp)
         throws BuildException {
         int rc = ftp.getReplyCode()
-        if (!(ignoreNoncriticalErrors
-              && (rc == CODE_550 || rc == CODE_553 || rc == CODE_521))) {
-            throw new BuildException("could not create directory: "
-                                     + ftp.getReplyString())
+        if (!(ignoreNoncriticalErrors && (rc == CODE_550 || rc == CODE_553 || rc == CODE_521))) {
+            throw new BuildException("could not create directory: ${ftp.getReplyString()}")
         }
     }
 
@@ -2367,15 +2239,14 @@ public class FtpTask {
             log.trace("Opening FTP connection to ${server}")
 
             ftp = new FTPClient()
-            if (this.isConfigurationSet) {
-                ftp = FTPConfigurator.configure(ftp, this)
+	        if (clientConfig) {
+		        ftp.configure(clientConfig)
             }
 
             ftp.setRemoteVerificationEnabled(enableRemoteVerification)
             ftp.connect(server, port)
             if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                throw new BuildException("FTP connection failed: "
-                                         + ftp.getReplyString())
+                throw new BuildException("FTP connection failed: ${ftp.getReplyString()}")
             }
 
             log.trace("connected")
@@ -2389,16 +2260,14 @@ public class FtpTask {
             log.trace("login succeeded")
 
             if (binary) {
-                ftp.setFileType(org.apache.commons.net.ftp.FTP.BINARY_FILE_TYPE)
+                ftp.setFileType(FTP.BINARY_FILE_TYPE)
                 if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                    throw new BuildException("could not set transfer type: "
-                                             + ftp.getReplyString())
+                    throw new BuildException("could not set transfer type: ${ftp.getReplyString()}")
                 }
             } else {
-                ftp.setFileType(org.apache.commons.net.ftp.FTP.ASCII_FILE_TYPE)
+                ftp.setFileType(FTP.ASCII_FILE_TYPE)
                 if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                    throw new BuildException("could not set transfer type: "
-                                             + ftp.getReplyString())
+                    throw new BuildException("could not set transfer type: ${ftp.getReplyString()}")
                 }
             }
 
@@ -2406,8 +2275,7 @@ public class FtpTask {
                 log.trace("entering passive mode")
                 ftp.enterLocalPassiveMode()
                 if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                    throw new BuildException("could not enter into passive "
-                                             + "mode: " + ftp.getReplyString())
+                    throw new BuildException("could not enter into passive mode: ${ftp.getReplyString()}")
                 }
             }
 
@@ -2439,10 +2307,10 @@ public class FtpTask {
                     }, "umask " + umask)
             }
 
-            // If the action is MK_DIR, then the specified remote
+            // If the action is Action.MK_DIR, then the specified remote
             // directory is the directory to create.
 
-            if (action == MK_DIR) {
+            if (action == Action.MK_DIR) {
                 RetryHandler h = new RetryHandler(this.retriesAllowed, this)
                 final FTPClient lftp = ftp
                 executeRetryable(h, new Retryable() {
@@ -2450,7 +2318,7 @@ public class FtpTask {
                             makeRemoteDir(lftp, remotedir)
                         }
                     }, remotedir)
-            } else if (action == SITE_CMD) {
+            } else if (action == Action.SITE_CMD) {
                 RetryHandler h = new RetryHandler(this.retriesAllowed, this)
                 final FTPClient lftp = ftp
                 executeRetryable(h, new Retryable() {
@@ -2463,8 +2331,7 @@ public class FtpTask {
                     log.trace("changing the remote directory to ${remotedir}")
                     ftp.changeWorkingDirectory(remotedir)
                     if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                        throw new BuildException("could not change remote "
-                                                 + "directory: " + ftp.getReplyString())
+                        throw new BuildException("could not change remote directory: ${ftp.getReplyString()}")
                     }
                 }
                 if (newerOnly && timeDiffAuto) {
@@ -2472,12 +2339,12 @@ public class FtpTask {
                     // and remote
                     timeDiffMillis = getTimeDiff(ftp)
                 }
-                log.info("${ACTION_STRS[action]} ${ACTION_TARGET_STRS[action]}")
+                log.info("${action.actionString} ${action.targetString}")
                 transferFiles(ftp)
             }
 
         } catch (IOException ex) {
-            throw new BuildException("error during FTP transfer: " + ex, ex)
+            throw new BuildException("error during FTP transfer: ${ex}", ex)
         } finally {
             if (ftp != null && ftp.isConnected()) {
                 try {
@@ -2492,56 +2359,6 @@ public class FtpTask {
     }
 
 
-    /**
-     * an action to perform, one of
-     * "send", "put", "recv", "get", "del", "delete", "list", "mkdir", "chmod",
-     * "rmdir"
-     */
-    public static class Action extends EnumeratedAttribute {
-
-        private static final String[] VALID_ACTIONS = [
-            "send", "put", "recv", "get", "del", "delete", "list", "mkdir",
-            "chmod", "rmdir", "site"
-        ]
-
-
-        /**
-         * Get the valid values
-         *
-         * @return an array of the valid FTP actions.
-         */
-        public String[] getValues() {
-            return VALID_ACTIONS
-        }
-
-
-        /**
-         * Get the symbolic equivalent of the action value.
-         *
-         * @return the SYMBOL representing the given action.
-         */
-        public int getAction() {
-            String actionL = getValue().toLowerCase(Locale.ENGLISH)
-            if (actionL.equals("send") || actionL.equals("put")) {
-                return SEND_FILES
-            } else if (actionL.equals("recv") || actionL.equals("get")) {
-                return GET_FILES
-            } else if (actionL.equals("del") || actionL.equals("delete")) {
-                return DEL_FILES
-            } else if (actionL.equals("list")) {
-                return LIST_FILES
-            } else if (actionL.equals("chmod")) {
-                return CHMOD
-            } else if (actionL.equals("mkdir")) {
-                return MK_DIR
-            } else if (actionL.equals("rmdir")) {
-                return RM_DIR
-            } else if (actionL.equals("site")) {
-                return SITE_CMD
-            }
-            return SEND_FILES
-        }
-    }
     /**
      * represents one of the valid timestamp adjustment values
      * recognized by the <code>timestampGranularity</code> attribute.<p>
@@ -2578,10 +2395,10 @@ public class FtpTask {
          * @return the number of milliseconds associated with
          * the attribute, in the context of the supplied action
          */
-        public long getMilliseconds(int action) {
+        public long getMilliseconds(Action action) {
             String granularityU = getValue().toUpperCase(Locale.ENGLISH)
             if ("".equals(granularityU)) {
-                if (action == SEND_FILES) {
+                if (action == Action.SEND_FILES) {
                     return GRANULARITY_MINUTE
                 }
             } else if ("MINUTE".equals(granularityU)) {
@@ -2595,67 +2412,6 @@ public class FtpTask {
             return g
         }
 
-    }
-    /**
-     * one of the valid system type keys recognized by the systemTypeKey
-     * attribute.
-     */
-    public static class FTPSystemType extends EnumeratedAttribute {
-
-        private static final String[] VALID_SYSTEM_TYPES = [
-            "", "UNIX", "VMS", "WINDOWS", "OS/2", "OS/400",
-            "MVS"
-        ]
-
-
-        /**
-         * Get the valid values.
-         * @return the list of valid system types.
-         */
-        public String[] getValues() {
-            return VALID_SYSTEM_TYPES
-        }
-
-        static final FTPSystemType getDefault() {
-            FTPSystemType ftpst = new FTPSystemType()
-            ftpst.setValue("")
-            return ftpst
-        }
-    }
-    /**
-     * Enumerated class for languages.
-     */
-    public static class LanguageCode extends EnumeratedAttribute {
-
-
-        private static final String[] VALID_LANGUAGE_CODES =
-            getValidLanguageCodes()
-
-        private static String[] getValidLanguageCodes() {
-            Collection c = FTPClientConfig.getSupportedLanguageCodes()
-            String[] ret = new String[c.size() + 1]
-            int i = 0
-            ret[i++] = ""
-            for (Iterator it = c.iterator(); it.hasNext(); i++) {
-                ret[i] = (String) it.next()
-            }
-            return ret
-        }
-
-
-        /**
-         * Return the value values.
-         * @return the list of valid language types.
-         */
-        public String[] getValues() {
-            return VALID_LANGUAGE_CODES
-        }
-
-        static final LanguageCode getDefault() {
-            LanguageCode lc = new LanguageCode()
-            lc.setValue("")
-            return lc
-        }
     }
 
 }
