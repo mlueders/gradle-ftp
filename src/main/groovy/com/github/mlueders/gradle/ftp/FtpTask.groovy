@@ -8,7 +8,6 @@ import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPClientConfig
 import org.apache.commons.net.ftp.FTPFile
 import org.apache.commons.net.ftp.FTPReply
-import org.apache.tools.ant.BuildException
 import org.apache.tools.ant.DirectoryScanner
 import org.apache.tools.ant.taskdefs.Delete
 import org.apache.tools.ant.types.FileSet
@@ -451,7 +450,7 @@ public class FtpTask {
                 clearCaches()
                 ftp.changeWorkingDirectory(cwd)
             } catch (IOException e) {
-                throw new BuildException("Unable to scan FTP server: ", e)
+                throw new GradleException("Unable to scan FTP server: ", e)
             }
         }
 
@@ -462,21 +461,17 @@ public class FtpTask {
          * @since ant1.6
          */
         private void checkIncludePatterns() {
-
             Hashtable newroots = new Hashtable()
-            // put in the newroots vector the include patterns without
-            // wildcard tokens
+            // put in the newroots vector the include patterns without wildcard tokens
             for (int icounter = 0; icounter < includes.length; icounter++) {
-                String newpattern =
-                    SelectorUtils.rtrimWildcardTokens(includes[icounter])
+                String newpattern = SelectorUtils.rtrimWildcardTokens(includes[icounter])
                 newroots.put(newpattern, includes[icounter])
             }
             if (remoteDir == null) {
                 try {
                     remoteDir = ftp.printWorkingDirectory()
                 } catch (IOException e) {
-                    throw new BuildException("could not read current ftp directory",
-                                             getLocation())
+                    throw new GradleException("could not read current ftp directory")
                 }
             }
             AntFTPFile baseFTPFile = new AntFTPRootFile(ftp, remoteDir)
@@ -512,9 +507,7 @@ public class FtpTask {
                             try {
                                 path = myfile.getRelativePath()
                                 traversesSymlinks = myfile.isTraverseSymlinks()
-                            }  catch (IOException be) {
-                                throw new BuildException(be, getLocation())
-                            } catch (BuildException be) {
+                            } catch (GradleException be) {
                                 isOK = false
                             }
                         }
@@ -574,7 +567,7 @@ public class FtpTask {
                 if (!ftp.changeWorkingDirectory(dir)) {
                     return
                 }
-                String completePath = null
+                String completePath
                 if (!vpath.equals("")) {
                     completePath = rootPath + remoteFileSep
                         + vpath.replace(File.separatorChar, remoteFileSep.charAt(0))
@@ -624,8 +617,7 @@ public class FtpTask {
                 }
                 ftp.changeToParentDirectory()
             } catch (IOException e) {
-                throw new BuildException("Error while communicating with FTP "
-                                         + "server: ", e)
+                throw new GradleException("Error while communicating with FTP server", e)
             }
         }
         /**
@@ -666,7 +658,7 @@ public class FtpTask {
                             try {
                                 file.getClient().changeWorkingDirectory(file.curpwd)
                             } catch (IOException ioe) {
-                                throw new BuildException("could not change directory to curpwd")
+                                throw new GradleException("could not change directory to curpwd")
                             }
                             scandir(file.getLink(),
                                     name + File.separator, fast)
@@ -674,7 +666,7 @@ public class FtpTask {
                             try {
                                 file.getClient().changeWorkingDirectory(file.curpwd)
                             } catch (IOException ioe) {
-                                throw new BuildException("could not change directory to curpwd")
+                                throw new GradleException("could not change directory to curpwd")
                             }
                             scandir(file.getName(),
                                     name + File.separator, fast)
@@ -687,7 +679,7 @@ public class FtpTask {
                         try {
                             file.getClient().changeWorkingDirectory(file.curpwd)
                         } catch (IOException ioe) {
-                            throw new BuildException("could not change directory to curpwd")
+                            throw new GradleException("could not change directory to curpwd")
                         }
                         scandir(file.getName(),
                                 name + File.separator, fast)
@@ -738,26 +730,17 @@ public class FtpTask {
             //getProject().log("listing files in directory " + directory, Project.MSG_DEBUG)
             String currentPath = directory
             if (changedir) {
-                try {
-                    boolean result = ftp.changeWorkingDirectory(directory)
-                    if (!result) {
-                        return null
-                    }
-                    currentPath = ftp.printWorkingDirectory()
-                } catch (IOException ioe) {
-                    throw new BuildException(ioe, getLocation())
+                boolean result = ftp.changeWorkingDirectory(directory)
+                if (!result) {
+                    return null
                 }
+                currentPath = ftp.printWorkingDirectory()
             }
             if (fileListMap.containsKey(currentPath)) {
 	            log.debug("filelist map used in listing files")
                 return ((FTPFile[]) fileListMap.get(currentPath))
             }
-            FTPFile[] result = null
-            try {
-                result = ftp.listFiles()
-            } catch (IOException ioe) {
-                throw new BuildException(ioe, getLocation())
-            }
+            FTPFile[] result = ftp.listFiles()
             fileListMap.put(currentPath, result)
             if (!remoteSensitivityChecked) {
                 checkRemoteSensitivity(result, directory)
@@ -767,11 +750,7 @@ public class FtpTask {
 
         private void forceRemoteSensitivityCheck() {
             if (!remoteSensitivityChecked) {
-                try {
-                    checkRemoteSensitivity(ftp.listFiles(), ftp.printWorkingDirectory())
-                } catch (IOException ioe) {
-                    throw new BuildException(ioe, getLocation())
-                }
+	            checkRemoteSensitivity(ftp.listFiles(), ftp.printWorkingDirectory())
             }
         }
         /**
@@ -817,11 +796,7 @@ public class FtpTask {
                 } catch (IOException ioe) {
                     remoteSystemCaseSensitive = true
                 } finally {
-                    try {
-                        ftp.changeWorkingDirectory(directory)
-                    } catch (IOException ioe) {
-                        throw new BuildException(ioe, getLocation())
-                    }
+	                ftp.changeWorkingDirectory(directory)
                 }
                 log.trace("remote system is case sensitive : ${remoteSystemCaseSensitive}")
                 remoteSensitivityChecked = true
@@ -894,8 +869,7 @@ public class FtpTask {
                     }
                     this.curpwd = parent.getAbsolutePath()
                 } catch (IOException ioe) {
-                    throw new BuildException("could not change working dir to "
-                                             + parent.curpwd)
+                    throw new GradleException("could not change working dir to ${parent.curpwd}")
                 }
                 final int size = pathElements.size()
                 for (int fcount = 0; fcount < size - 1; fcount++) {
@@ -915,9 +889,8 @@ public class FtpTask {
                         this.curpwd = getCurpwdPlusFileSep()
                             + currentPathElement
                     } catch (IOException ioe) {
-                        throw new BuildException("could not change working dir to "
-                                                 + (String) pathElements.elementAt(fcount)
-                                                 + " from " + this.curpwd)
+	                    String toPath = pathElements.elementAt(fcount)
+                        throw new GradleException("could not change working dir to ${toPath} from ${curpwd}")
                     }
 
                 }
@@ -998,10 +971,10 @@ public class FtpTask {
              * (ie does not behave like File.getCanonicalPath())
              * @return                relative path, separated by remoteFileSep
              * @throws IOException    if a change directory fails, ...
-             * @throws BuildException if one of the components of the relative path cannot
+             * @throws GradleException if one of the components of the relative path cannot
              * be found.
              */
-            public String getRelativePath() throws IOException, BuildException {
+            public String getRelativePath() throws IOException, GradleException {
                 if (!relativePathCalculated) {
                     if (parent != null) {
                         traversesSymlinks = parent.isTraverseSymlinks()
@@ -1130,9 +1103,9 @@ public class FtpTask {
              * @return <code>true</code> if a symbolic link is encountered in the relative path.
              * @throws IOException if one of the change directory or directory listing operations
              * fails
-             * @throws BuildException if a path component in the relative path cannot be found.
+             * @throws GradleException if a path component in the relative path cannot be found.
              */
-            public boolean isTraverseSymlinks() throws IOException, BuildException {
+            public boolean isTraverseSymlinks() throws IOException, GradleException {
                 if (!relativePathCalculated) {
                     // getRelativePath also finds about symlinks
                     getRelativePath()
@@ -1154,35 +1127,19 @@ public class FtpTask {
          */
         protected class AntFTPRootFile extends AntFTPFile {
             private String remotedir
-            /**
-             * constructor
-             * @param aclient FTP client
-             * @param remotedir remote directory
-             */
+
             public AntFTPRootFile(FTPClient aclient, String remotedir) {
                 super(aclient, null, remotedir)
                 this.remotedir = remotedir
-                try {
-                    this.getClient().changeWorkingDirectory(this.remotedir)
-                    this.setCurpwd(this.getClient().printWorkingDirectory())
-                } catch (IOException ioe) {
-                    throw new BuildException(ioe, getLocation())
-                }
+                this.getClient().changeWorkingDirectory(this.remotedir)
+                this.setCurpwd(this.getClient().printWorkingDirectory())
             }
-            /**
-             * find the absolute path
-             * @return absolute path
-             */
+
             public String getAbsolutePath() {
                 return this.getCurpwd()
             }
-            /**
-             * find out the relative path to root
-             * @return empty string
-             * @throws BuildException actually never
-             * @throws IOException  actually never
-             */
-            public String getRelativePath() throws BuildException, IOException {
+
+            public String getRelativePath() {
                 return ""
             }
         }
@@ -1223,8 +1180,7 @@ public class FtpTask {
 	                log.error("could not cd back to ${dir} while checking a symlink")
                 } finally {
                     if (!comeback) {
-                        throw new BuildException("could not cd back to " + dir
-                                                 + " while checking a symlink")
+                        throw new GradleException("could not cd back to ${dir} while checking a symlink")
                     }
                 }
             }
@@ -1287,10 +1243,9 @@ public class FtpTask {
      * @return the number of files to be transferred.
      *
      * @throws IOException if there is a problem reading a file
-     * @throws BuildException if there is a problem in the configuration.
+     * @throws GradleException if there is a problem in the configuration.
      */
-    protected int transferFiles(final FTPClient ftp, FileSet fs)
-        throws IOException, BuildException {
+    protected int transferFiles(final FTPClient ftp, FileSet fs) throws IOException, GradleException {
         DirectoryScanner ds
         if (action == Action.SEND_FILES) {
             ds = fs.getDirectoryScanner(getProject())
@@ -1311,8 +1266,7 @@ public class FtpTask {
 
         if ((ds.getBasedir() == null)
             && ((action == Action.SEND_FILES) || (action == Action.GET_FILES))) {
-            throw new BuildException("the dir attribute must be set for send "
-                                     + "and get actions")
+            throw new GradleException("the dir attribute must be set for send and get actions")
         } else {
             if ((action == Action.SEND_FILES) || (action == Action.GET_FILES)) {
                 dir = ds.getBasedir().getAbsolutePath()
@@ -1372,7 +1326,7 @@ public class FtpTask {
                                     transferred++
                                     break
                                 default:
-                                    throw new BuildException("unknown ftp action " + action)
+                                    throw new GradleException("unknown ftp action ${action}")
                                 }
                             }
                         }, dsfile)
@@ -1387,20 +1341,19 @@ public class FtpTask {
 
 
     /**
-     * Sends all files specified by the configured filesets to the remote
-     * server.
+     * Sends all files specified by the configured filesets to the remote server.
      *
      * @param ftp the FTPClient instance used to perform FTP actions
      *
      * @throws IOException if there is a problem reading a file
-     * @throws BuildException if there is a problem in the configuration.
+     * @throws GradleException if there is a problem in the configuration.
      */
-    protected void transferFiles(FTPClient ftp) throws IOException, BuildException {
+    protected void transferFiles(FTPClient ftp) throws IOException, GradleException {
         transferred = 0
         skipped = 0
 
         if (filesets.size() == 0) {
-            throw new BuildException("at least one fileset must be specified.")
+            throw new GradleException("at least one fileset must be specified.")
         } else {
             // get files from filesets
             final int size = filesets.size()
@@ -1432,10 +1385,8 @@ public class FtpTask {
      * @return the filename as it will appear on the server.
      */
     protected String resolveFile(String file) {
-        return file.replace(System.getProperty("file.separator").charAt(0),
-                            remoteFileSep.charAt(0))
+        return file.replace(System.getProperty("file.separator").charAt(0), remoteFileSep.charAt(0))
     }
-
 
     /**
      * Creates all parent directories specified in a complete relative
@@ -1445,13 +1396,10 @@ public class FtpTask {
      * @param ftp the FTP client instance to use to execute FTP actions on
      *        the remote server.
      * @param filename the name of the file whose parents should be created.
-     * @throws IOException under non documented circumstances
-     * @throws BuildException if it is impossible to cd to a remote directory
+     * @throws GradleException if it is impossible to cd to a remote directory
      *
      */
-    protected void createParents(FTPClient ftp, String filename)
-        throws IOException, BuildException {
-
+    protected void createParents(FTPClient ftp, String filename) throws GradleException {
         File dir = new File(filename)
         if (dirCache.contains(dir)) {
             return
@@ -1477,8 +1425,7 @@ public class FtpTask {
             String parent = dir.getParent()
             if (parent != null) {
                 if (!ftp.changeWorkingDirectory(resolveFile(parent))) {
-                    throw new BuildException("could not change to "
-                                             + "directory: " + ftp.getReplyString())
+                    throw new GradleException("could not change to directory: ${ftp.getReplyString()}")
                 }
             }
 
@@ -1492,8 +1439,7 @@ public class FtpTask {
                         handleMkDirFailure(ftp)
                     }
                     if (!ftp.changeWorkingDirectory(dir.getName())) {
-                        throw new BuildException("could not change to "
-                                                 + "directory: " + ftp.getReplyString())
+                        throw new GradleException("could not change to directory: ${ftp.getReplyString()}")
                     }
                 }
                 dirCache.add(dir)
@@ -1533,7 +1479,7 @@ public class FtpTask {
             mydelete.setFile(tempFile.getCanonicalFile())
             mydelete.execute()
         } catch (Exception e) {
-            throw new BuildException(e, getLocation())
+            throw new GradleException("Failed to auto calculate time difference", e)
         }
         return returnValue
     }
@@ -1549,19 +1495,15 @@ public class FtpTask {
                                                        null, false, false)
             String fileName = localFile.getName()
             boolean found = false
-            try {
-                if (theFiles == null) {
-                    theFiles = ftp.listFiles()
+            if (theFiles == null) {
+                theFiles = ftp.listFiles()
+            }
+            for (int counter2 = 0; counter2 < theFiles.length; counter2++) {
+                if (theFiles[counter2] != null
+                    && theFiles[counter2].getName().equals(fileName)) {
+                    found = true
+                    break
                 }
-                for (int counter2 = 0; counter2 < theFiles.length; counter2++) {
-                    if (theFiles[counter2] != null
-                        && theFiles[counter2].getName().equals(fileName)) {
-                        found = true
-                        break
-                    }
-                }
-            } catch (IOException ioe) {
-                throw new BuildException(ioe, getLocation())
             }
             if (!found) {
                 localFile.deleteOnExit()
@@ -1578,13 +1520,10 @@ public class FtpTask {
      * @param localFile local file
      * @param remoteFile remote file
      * @return true if the target file is up to date
-     * @throws IOException  in unknown circumstances
-     * @throws BuildException if the date of the remote files cannot be found and the action is
+     * @throws GradleException if the date of the remote files cannot be found and the action is
      * GET_FILES
      */
-    protected boolean isUpToDate(FTPClient ftp, File localFile,
-                                 String remoteFile)
-        throws IOException, BuildException {
+    protected boolean isUpToDate(FTPClient ftp, File localFile, String remoteFile) {
         log.trace("checking date for ${remoteFile}")
 
         FTPFile[] files = ftp.listFiles(remoteFile)
@@ -1599,8 +1538,7 @@ public class FtpTask {
                 log.trace("Could not date test remote file: ${remoteFile} assuming out of date.")
                 return false
             } else {
-                throw new BuildException("could not date test remote file: "
-                                         + ftp.getReplyString())
+                throw new GradleException("could not date test remote file: ${ftp.getReplyString()}")
             }
         }
 
@@ -1643,10 +1581,8 @@ public class FtpTask {
      * Sends a site command to the ftp server
      * @param ftp ftp client
      * @param theCMD command to execute
-     * @throws IOException  in unknown circumstances
-     * @throws BuildException in unknown circumstances
      */
-    protected void doSiteCommand(FTPClient ftp, String theCMD) throws IOException, BuildException {
+    protected void doSiteCommand(FTPClient ftp, String theCMD) {
         boolean rc
         String[] myReply
 
@@ -1681,11 +1617,8 @@ public class FtpTask {
      * @param filename relative path of the file to be send
      *        locally relative to dir
      *        remotely relative to the remotedir attribute
-     * @throws IOException  in unknown circumstances
-     * @throws BuildException in unknown circumstances
      */
-    protected void sendFile(FTPClient ftp, String dir, String filename)
-        throws IOException, BuildException {
+    protected void sendFile(FTPClient ftp, String dir, String filename) {
         InputStream instream = null
 
         try {
@@ -1715,7 +1648,7 @@ public class FtpTask {
                     log.warn(s)
                     skipped++
                 } else {
-                    throw new BuildException(s)
+                    throw new GradleException(s)
                 }
 
             } else {
@@ -1736,12 +1669,10 @@ public class FtpTask {
      * Delete a file from the remote host.
      * @param ftp ftp client
      * @param filename file to delete
-     * @throws IOException  in unknown circumstances
-     * @throws BuildException if skipFailedTransfers is set to false
+     * @throws GradleException if skipFailedTransfers is set to false
      * and the deletion could not be done
      */
-    protected void delFile(FTPClient ftp, String filename)
-        throws IOException, BuildException {
+    protected void delFile(FTPClient ftp, String filename) throws GradleException {
         if (verbose) {
             log.info("deleting ${filename}")
         }
@@ -1753,7 +1684,7 @@ public class FtpTask {
                 log.warn(s)
                 skipped++
             } else {
-                throw new BuildException(s)
+                throw new GradleException(s)
             }
         } else {
             log.trace("File ${filename} deleted from ${server}")
@@ -1765,12 +1696,10 @@ public class FtpTask {
      * Delete a directory, if empty, from the remote host.
      * @param ftp ftp client
      * @param dirname directory to delete
-     * @throws IOException  in unknown circumstances
-     * @throws BuildException if skipFailedTransfers is set to false
+     * @throws GradleException if skipFailedTransfers is set to false
      * and the deletion could not be done
      */
-    protected void rmDir(FTPClient ftp, String dirname)
-        throws IOException, BuildException {
+    protected void rmDir(FTPClient ftp, String dirname) throws GradleException {
         if (verbose) {
             log.info("removing ${dirname}")
         }
@@ -1782,7 +1711,7 @@ public class FtpTask {
                 log.warn(s)
                 skipped++
             } else {
-                throw new BuildException(s)
+                throw new GradleException(s)
             }
         } else {
             log.trace("Directory ${dirname} removed from ${server}")
@@ -1803,12 +1732,10 @@ public class FtpTask {
      * @param dir local base directory to which the file should go back
      * @param filename relative path of the file based upon the ftp remote directory
      *        and/or the local base directory (dir)
-     * @throws IOException  in unknown circumstances
-     * @throws BuildException if skipFailedTransfers is false
+     * @throws GradleException if skipFailedTransfers is false
      * and the file cannot be retrieved.
      */
-    protected void getFile(FTPClient ftp, String dir, String filename)
-        throws IOException, BuildException {
+    protected void getFile(FTPClient ftp, String dir, String filename) throws GradleException {
         OutputStream outstream = null
         try {
             File file = getProject().resolveFile(new File(dir, filename).getPath())
@@ -1836,7 +1763,7 @@ public class FtpTask {
                     log.warn(s)
                     skipped++
                 } else {
-                    throw new BuildException(s)
+                    throw new GradleException(s)
                 }
 
             } else {
@@ -1870,11 +1797,8 @@ public class FtpTask {
      * @param ftp ftp client
      * @param bw buffered writer
      * @param filename the directory one wants to list
-     * @throws IOException  in unknown circumstances
-     * @throws BuildException in unknown circumstances
      */
-    protected void listFile(FTPClient ftp, BufferedWriter bw, String filename)
-        throws IOException, BuildException {
+    protected void listFile(FTPClient ftp, BufferedWriter bw, String filename) {
         if (verbose) {
             log.info("listing ${filename}")
         }
@@ -1894,14 +1818,12 @@ public class FtpTask {
      * @param ftp The FTP client connection
      * @param dir The directory to create (format must be correct for host
      *      type)
-     * @throws IOException  in unknown circumstances
-     * @throws BuildException if ignoreNoncriticalErrors has not been set to true
+     * @throws GradleException if ignoreNoncriticalErrors has not been set to true
      *         and a directory could not be created, for instance because it was
      *         already existing. Precisely, the codes 521, 550 and 553 will trigger
-     *         a BuildException
+     *         a GradleException
      */
-    protected void makeRemoteDir(FTPClient ftp, String dir)
-        throws IOException, BuildException {
+    protected void makeRemoteDir(FTPClient ftp, String dir) throws GradleException {
         String workingDirectory = ftp.printWorkingDirectory()
         if (verbose) {
             if (dir.startsWith("/") || workingDirectory == null) {
@@ -1913,7 +1835,7 @@ public class FtpTask {
         if (dir.startsWith("/")) {
             ftp.changeWorkingDirectory("/")
         }
-        String subdir = ""
+        String subdir
         StringTokenizer st = new StringTokenizer(dir, "/")
         while (st.hasMoreTokens()) {
             subdir = st.nextToken()
@@ -1925,7 +1847,7 @@ public class FtpTask {
                     //  failed because the directory already exists.
                     int rc = ftp.getReplyCode()
                     if (!(ignoreNoncriticalErrors && (rc == CODE_550 || rc == CODE_553 || rc == CODE_521))) {
-                        throw new BuildException("could not create directory: ${ftp.getReplyString()}")
+                        throw new GradleException("could not create directory: ${ftp.getReplyString()}")
                     }
                     if (verbose) {
                         log.info("Directory already exists")
@@ -1947,23 +1869,21 @@ public class FtpTask {
      * look at the response for a failed mkdir action, decide whether
      * it matters or not. If it does, we throw an exception
      * @param ftp current ftp connection
-     * @throws BuildException if this is an error to signal
+     * @throws GradleException if this is an error to signal
      */
-    private void handleMkDirFailure(FTPClient ftp)
-        throws BuildException {
+    private void handleMkDirFailure(FTPClient ftp) throws GradleException {
         int rc = ftp.getReplyCode()
         if (!(ignoreNoncriticalErrors && (rc == CODE_550 || rc == CODE_553 || rc == CODE_521))) {
-            throw new BuildException("could not create directory: ${ftp.getReplyString()}")
+            throw new GradleException("could not create directory: ${ftp.getReplyString()}")
         }
     }
 
     /**
      * Runs the task.
      *
-     * @throws BuildException if the task fails or is not configured
-     *         correctly.
+     * @throws GradleException if the task fails or is not configured correctly.
      */
-    public void execute() throws BuildException {
+    public void execute() throws GradleException {
         checkAttributes()
 
         FTPClient ftp = null
@@ -1979,7 +1899,7 @@ public class FtpTask {
             ftp.setRemoteVerificationEnabled(enableRemoteVerification)
             ftp.connect(server, port)
             if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                throw new BuildException("FTP connection failed: ${ftp.getReplyString()}")
+                throw new GradleException("FTP connection failed: ${ftp.getReplyString()}")
             }
 
             log.trace("connected")
@@ -1987,28 +1907,22 @@ public class FtpTask {
 
             if ((this.account != null && !ftp.login(userId, password, account))
                 || (this.account == null && !ftp.login(userId, password))) {
-                throw new BuildException("Could not login to FTP server")
+                throw new GradleException("Could not login to FTP server")
             }
 
             log.trace("login succeeded")
 
-            if (binary) {
-                ftp.setFileType(FTP.BINARY_FILE_TYPE)
-                if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                    throw new BuildException("could not set transfer type: ${ftp.getReplyString()}")
-                }
-            } else {
-                ftp.setFileType(FTP.ASCII_FILE_TYPE)
-                if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                    throw new BuildException("could not set transfer type: ${ftp.getReplyString()}")
-                }
-            }
+	        int fileType = binary ? FTP.BINARY_FILE_TYPE : FTP.ASCII_FILE_TYPE
+	        ftp.setFileType(fileType)
+	        if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
+		        throw new GradleException("could not set transfer type: ${ftp.getReplyString()}")
+	        }
 
             if (passive) {
                 log.trace("entering passive mode")
                 ftp.enterLocalPassiveMode()
                 if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                    throw new BuildException("could not enter into passive mode: ${ftp.getReplyString()}")
+                    throw new GradleException("could not enter into passive mode: ${ftp.getReplyString()}")
                 }
             }
 
@@ -2027,9 +1941,7 @@ public class FtpTask {
             }
 
 
-            // For a unix ftp server you can set the default mask for all files
-            // created.
-
+            // For a unix ftp server you can set the default mask for all files created.
             if (umask != null) {
                 RetryHandler h = new RetryHandler(this.retriesAllowed, this)
                 final FTPClient lftp = ftp
@@ -2042,7 +1954,6 @@ public class FtpTask {
 
             // If the action is Action.MK_DIR, then the specified remote
             // directory is the directory to create.
-
             if (action == Action.MK_DIR) {
                 RetryHandler h = new RetryHandler(this.retriesAllowed, this)
                 final FTPClient lftp = ftp
@@ -2064,7 +1975,7 @@ public class FtpTask {
                     log.trace("changing the remote directory to ${remoteDir}")
                     ftp.changeWorkingDirectory(remoteDir)
                     if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-                        throw new BuildException("could not change remote directory: ${ftp.getReplyString()}")
+                        throw new GradleException("could not change remote directory: ${ftp.getReplyString()}")
                     }
                 }
                 if (newerOnly && timeDiffAuto) {
@@ -2077,7 +1988,7 @@ public class FtpTask {
             }
 
         } catch (IOException ex) {
-            throw new BuildException("error during FTP transfer: ${ex}", ex)
+            throw new GradleException("error during FTP transfer: ${ex}", ex)
         } finally {
             if (ftp != null && ftp.isConnected()) {
                 try {
