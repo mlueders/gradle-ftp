@@ -11,13 +11,13 @@ import org.apache.commons.net.ftp.FTPReply
 import org.apache.tools.ant.BuildException
 import org.apache.tools.ant.DirectoryScanner
 import org.apache.tools.ant.taskdefs.Delete
-import org.apache.tools.ant.types.EnumeratedAttribute
 import org.apache.tools.ant.types.FileSet
 import org.apache.tools.ant.types.selectors.SelectorUtils
 import org.apache.tools.ant.util.FileUtils
 import org.apache.tools.ant.util.RetryHandler
 import org.apache.tools.ant.util.Retryable
 import org.apache.tools.ant.util.VectorSet
+import org.gradle.api.GradleException
 
 /**
  * Basic FTP client. Performs the following actions:
@@ -81,63 +81,217 @@ public class FtpTask {
 		}
 	}
 
+	/**
+	 * Represents one of the valid timestamp adjustment values
+	 *
+	 * A timestamp adjustment may be used in file transfers for checking
+	 * uptodateness. MINUTE means to add one minute to the server
+	 * timestamp.  This is done because FTP servers typically list
+	 * timestamps HH:mm and client FileSystems typically use HH:mm:ss.
+	 *
+	 * The default is to use MINUTE for PUT actions and NONE for GET
+	 * actions, since GETs have the <code>preserveLastModified</code>
+	 * option, which takes care of the problem in most use cases where
+	 * this level of granularity is an issue.
+	 */
+	public static enum Granularity {
+		UNSET,
+		MINUTE,
+		NONE
+
+		public long getMilliseconds(Action action) {
+			if ((this == MINUTE) || ((this == UNSET) && (action == Action.SEND_FILES))) {
+				return GRANULARITY_MINUTE
+			}
+			return 0L
+		}
+	}
 
 
 	/** Default port for FTP */
 	public static final int DEFAULT_FTP_PORT = 21
 
+	/**
+	 * The FTP action to be taken.
+	 * Defaults to send.
+	 */
+    Action action = Action.SEND_FILES
+	/**
+     * The remote directory where files will be placed. This may be a
+     * relative or absolute path, and must be in the path syntax expected by
+     * the remote server. No correction of path syntax will be performed.
+	 */
+    String remoteDir
+	/**
+	 * The FTP server to send files to.
+	 */
+	String server
+	/**
+	 * the FTP port used by the remote server.
+	 */
+	int port = DEFAULT_FTP_PORT
+	/**
+	 * The login user id to use on the specified server.
+	 */
+    String userId
+	/**
+	 * The login password for the given user id.
+	 */
+    String password
+	/**
+	 * The login account to use on the specified server.
+	 */
+    String account
+	/**
+	 * The output file for the "list" action. This attribute is ignored for any other actions.
+	 */
+    File listing
+	/**
+	 * Names the command that will be executed if the action is "site".
+	 */
+	String siteCommand
+	/**
+	 * Names a site command that will be executed immediately after connection.
+	 */
+	String initialSiteCommand
+	/**
+	 * If true, uses binary mode, otherwise text mode.
+	 * Defaults to true.
+	 */
+	boolean binary = true
+	/**
+	 * Specifies whether to use passive mode. Set to true if you are behind a
+	 * firewall and cannot connect without it. Passive mode is disabled by default.
+	 */
+	boolean passive = false
+	/**
+	 * Set to true to receive notification about each file as it is
+	 * transferred.
+	 */
+	boolean verbose = false
+	/**
+	 * If true, transmit only files that are new or changed from their remote counterparts.
+	 * Defaults to false, transmit all files.
+	 * See the related attributes <code>timeDiffMillis</code> and <code>timeDiffAuto</code>.
+	 */
+    boolean newerOnly = false
+	/**
+	 * Number of milliseconds to add to the time on the remote machine to get the time on the local machine.
+	 * Use in conjunction with <code>newerOnly</code>
+	 */
+	long timeDiffMillis = 0
+	/**
+	 * Automatically determine the time difference between local and remote machine, defaults to false.
+	 *
+	 * This requires right to create and delete a temporary file in the remote directory.
+	 */
+	boolean timeDiffAuto = false
+	/**
+	 * Used in conjunction with <code>newerOnly</code>
+	 * @see Granularity
+	 */
+	Granularity timestampGranularity = Granularity.UNSET
+	/**
+	 * If true, unsuccessful file put, delete and get operations to be skipped with a warning
+	 * and the remainder of the files still transferred.
+	 * Defaults to false.
+	 */
+	boolean skipFailedTransfers = false
+	/**
+	 * If true, skip errors on directory creation.
+	 * Defaults to false.
+	 */
+    boolean ignoreNoncriticalErrors = false
+	/**
+	 * If true, modification times for "gotten" files will be preserved.
+	 * Defaults to false.
+	 */
+	boolean preserveLastModified = false
+	/**
+	 * The file permission mode (Unix only) for files sent to the server.
+	 */
+	String chmod = null
+	/**
+	 * The default mask for file creation on a unix server.
+	 */
+	String umask = null
+	/**
+	 * The remote file separator character. This normally defaults to the Unix standard forward slash,
+	 * but can be manually overridden if the remote server requires some other separator.
+	 * Only the first character of the string is used.
+	 */
+	String remoteFileSep = "/"
+	/**
+	 * If true, verifies that data and control connections are connected to the same remote host.
+	 * Defaults to true
+	 */
+	boolean enableRemoteVerification = true
+	/**
+	 * Defines how many times to retry executing FTP command before giving up.
+	 * A negative value means keep trying forever.
+	 * Default is 0 - try once and give up if failure.
+	 */
+    int retriesAllowed = 0
+	/**
+	 * Advanced configuration
+	 * @see org.apache.commons.net.ftp.FTPClientConfig
+	 */
 	FTPClientConfig clientConfig
 
 
 
 
+	/** return code of ftp */
+	private static final int CODE_521 = 521
+	private static final int CODE_550 = 550
+	private static final int CODE_553 = 553
 
+	/** adjust uptodate calculations where server timestamps are HH:mm and client's
+	 * are HH:mm:ss */
+	private static final long GRANULARITY_MINUTE = 60000L
 
-    /** return code of ftp */
-    private static final int CODE_521 = 521
-    private static final int CODE_550 = 550
-    private static final int CODE_553 = 553
+	/** Date formatter used in logging, note not thread safe! */
+	private static final SimpleDateFormat TIMESTAMP_LOGGING_SDF =
+			new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
-    /** adjust uptodate calculations where server timestamps are HH:mm and client's
-     * are HH:mm:ss */
-    private static final long GRANULARITY_MINUTE = 60000L
+	private static final FileUtils FILE_UTILS = FileUtils.getFileUtils()
 
-    /** Date formatter used in logging, note not thread safe! */
-    private static final SimpleDateFormat TIMESTAMP_LOGGING_SDF =
-        new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+	private Vector filesets = new Vector()
+	private Set dirCache = new HashSet()
+	private int transferred = 0
+	private int skipped = 0
+	private long granularityMillis = 0L
 
-    private static final FileUtils FILE_UTILS = FileUtils.getFileUtils()
+	/**
+	 * Checks to see that all required parameters are set.
+	 *
+	 * @throws GradleException if the configuration is not valid.
+	 */
+	private void checkAttributes() throws GradleException {
+		if (server == null) {
+			throw new GradleException("server attribute must be set!")
+		}
+		if (userId == null) {
+			throw new GradleException("userId attribute must be set!")
+		}
+		if (password == null) {
+			throw new GradleException("password attribute must be set!")
+		}
 
-    private String remotedir
-    private String server
-    private String userid
-    private String password
-    private String account
-    private File listing
-    private boolean binary = true
-    private boolean passive = false
-    private boolean verbose = false
-    private boolean newerOnly = false
-    private long timeDiffMillis = 0
-    private long granularityMillis = 0L
-    private boolean timeDiffAuto = false
-    private Action action = Action.SEND_FILES
-    private Vector filesets = new Vector()
-    private Set dirCache = new HashSet()
-    private int transferred = 0
-    private String remoteFileSep = "/"
-    private int port = DEFAULT_FTP_PORT
-    private boolean skipFailedTransfers = false
-    private int skipped = 0
-    private boolean ignoreNoncriticalErrors = false
-    private boolean preserveLastModified = false
-    private String chmod = null
-    private String umask = null
-    private Granularity timestampGranularity = Granularity.getDefault()
-    private int retriesAllowed = 0
-    private String siteCommand = null
-    private String initialSiteCommand = null
-    private boolean enableRemoteVerification = true
+		if ((action == Action.LIST_FILES) && (listing == null)) {
+			throw new GradleException("listing attribute must be set for list action!")
+		}
+		if (action == Action.MK_DIR && remoteDir == null) {
+			throw new GradleException("remotedir attribute must be set for mkdir action!")
+		}
+		if (action == Action.CHMOD && chmod == null) {
+			throw new GradleException("chmod attribute must be set for chmod action!")
+		}
+		if (action == Action.SITE_CMD && siteCommand == null) {
+			throw new GradleException("sitecommand attribute must be set for site action!")
+		}
+	}
+
 
     /**
      * internal class providing a File-like interface to some of the information
@@ -171,50 +325,29 @@ public class FtpTask {
             parts = FileUtils.getPathStack(completePath)
         }
 
-
-        /* (non-Javadoc)
-         * @see java.io.File#exists()
-         */
         public boolean exists() {
             return true
         }
 
-
-        /* (non-Javadoc)
-         * @see java.io.File#getAbsolutePath()
-         */
         public String getAbsolutePath() {
             return name
         }
 
-
-        /* (non-Javadoc)
-         * @see java.io.File#getName()
-         */
         public String getName() {
             return parts.length > 0 ? parts[parts.length - 1] : name
         }
 
-
-        /* (non-Javadoc)
-         * @see java.io.File#getParent()
-         */
         public String getParent() {
             String result = ""
             for(int i = 0; i < parts.length - 1; i++){
-                result += File.separatorChar + parts[i]
+                result += "${separatorChar}${parts[i]}"
             }
             return result
         }
 
-
-        /* (non-Javadoc)
-         * @see java.io.File#getPath()
-         */
         public String getPath() {
             return name
         }
-
 
         /**
          * FTP files are stored as absolute paths
@@ -224,22 +357,13 @@ public class FtpTask {
             return true
         }
 
-
-        /* (non-Javadoc)
-         * @see java.io.File#isDirectory()
-         */
         public boolean isDirectory() {
             return file == null
         }
 
-
-        /* (non-Javadoc)
-         * @see java.io.File#isFile()
-         */
         public boolean isFile() {
             return file != null
         }
-
 
         /**
          * FTP files cannot be hidden
@@ -250,10 +374,6 @@ public class FtpTask {
             return false
         }
 
-
-        /* (non-Javadoc)
-         * @see java.io.File#lastModified()
-         */
         public long lastModified() {
             if (file != null) {
                 return file.getTimestamp().getTimeInMillis()
@@ -261,10 +381,6 @@ public class FtpTask {
             return 0
         }
 
-
-        /* (non-Javadoc)
-         * @see java.io.File#length()
-         */
         public long length() {
             if (file != null) {
                 return file.getSize()
@@ -275,8 +391,7 @@ public class FtpTask {
 
     /**
      * internal class allowing to read the contents of a remote file system
-     * using the FTP protocol
-     * used in particular for ftp get operations
+     * using the FTP protocol used in particular for ftp get operations
      * differences with DirectoryScanner
      * "" (the root of the fileset) is never included in the included directories
      * followSymlinks defaults to false
@@ -356,15 +471,15 @@ public class FtpTask {
                     SelectorUtils.rtrimWildcardTokens(includes[icounter])
                 newroots.put(newpattern, includes[icounter])
             }
-            if (remotedir == null) {
+            if (remoteDir == null) {
                 try {
-                    remotedir = ftp.printWorkingDirectory()
+                    remoteDir = ftp.printWorkingDirectory()
                 } catch (IOException e) {
                     throw new BuildException("could not read current ftp directory",
                                              getLocation())
                 }
             }
-            AntFTPFile baseFTPFile = new AntFTPRootFile(ftp, remotedir)
+            AntFTPFile baseFTPFile = new AntFTPRootFile(ftp, remoteDir)
             rootPath = baseFTPFile.getAbsolutePath()
             // construct it
             if (newroots.containsKey("")) {
@@ -712,6 +827,7 @@ public class FtpTask {
                 remoteSensitivityChecked = true
             }
         }
+
         private String fiddleName(String origin) {
             StringBuffer result = new StringBuffer()
             for (int icounter = 0; icounter < origin.length(); icounter++) {
@@ -725,6 +841,7 @@ public class FtpTask {
             }
             return result.toString()
         }
+
         /**
          * an AntFTPFile is a representation of a remote file
          * @since Ant 1.6
@@ -1131,196 +1248,8 @@ public class FtpTask {
         }
         return !isFunctioningAsDirectory(ftp, dir, file)
     }
-    /**
-     * Sets the remote directory where files will be placed. This may be a
-     * relative or absolute path, and must be in the path syntax expected by
-     * the remote server. No correction of path syntax will be performed.
-     *
-     * @param dir the remote directory name.
-     */
-    public void setRemotedir(String dir) {
-        this.remotedir = dir
-    }
 
 
-    /**
-     * Sets the FTP server to send files to.
-     *
-     * @param server the remote server name.
-     */
-    public void setServer(String server) {
-        this.server = server
-    }
-
-
-    /**
-     * Sets the FTP port used by the remote server.
-     *
-     * @param port the port on which the remote server is listening.
-     */
-    public void setPort(int port) {
-        this.port = port
-    }
-
-
-    /**
-     * Sets the login user id to use on the specified server.
-     *
-     * @param userid remote system userid.
-     */
-    public void setUserid(String userid) {
-        this.userid = userid
-    }
-
-
-    /**
-     * Sets the login password for the given user id.
-     *
-     * @param password the password on the remote system.
-     */
-    public void setPassword(String password) {
-        this.password = password
-    }
-
-    /**
-     * Sets the login account to use on the specified server.
-     *
-     * @param pAccount the account name on remote system
-     * @since Ant 1.7
-     */
-    public void setAccount(String pAccount) {
-        this.account = pAccount
-    }
-
-
-    /**
-     * If true, uses binary mode, otherwise text mode (default is binary).
-     *
-     * @param binary if true use binary mode in transfers.
-     */
-    public void setBinary(boolean binary) {
-        this.binary = binary
-    }
-
-
-    /**
-     * Specifies whether to use passive mode. Set to true if you are behind a
-     * firewall and cannot connect without it. Passive mode is disabled by
-     * default.
-     *
-     * @param passive true is passive mode should be used.
-     */
-    public void setPassive(boolean passive) {
-        this.passive = passive
-    }
-
-
-    /**
-     * Set to true to receive notification about each file as it is
-     * transferred.
-     *
-     * @param verbose true if verbose notifications are required.
-     */
-    public void setVerbose(boolean verbose) {
-        this.verbose = verbose
-    }
-
-
-    /**
-     * A synonym for <tt>depends</tt>. Set to true to transmit only new
-     * or changed files.
-     *
-     * See the related attributes timediffmillis and timediffauto.
-     *
-     * @param newer if true only transfer newer files.
-     */
-    public void setNewer(boolean newer) {
-        this.newerOnly = newer
-    }
-
-    /**
-     * number of milliseconds to add to the time on the remote machine
-     * to get the time on the local machine.
-     *
-     * use in conjunction with <code>newer</code>
-     *
-     * @param timeDiffMillis number of milliseconds
-     *
-     * @since ant 1.6
-     */
-    public void setTimeDiffMillis(long timeDiffMillis) {
-        this.timeDiffMillis = timeDiffMillis
-    }
-
-    /**
-     * &quottrue&quot to find out automatically the time difference
-     * between local and remote machine.
-     *
-     * This requires right to create
-     * and delete a temporary file in the remote directory.
-     *
-     * @param timeDiffAuto true = find automatically the time diff
-     *
-     * @since ant 1.6
-     */
-    public void setTimeDiffAuto(boolean timeDiffAuto) {
-        this.timeDiffAuto = timeDiffAuto
-    }
-
-    /**
-     * Set to true to preserve modification times for "gotten" files.
-     *
-     * @param preserveLastModified if true preserver modification times.
-     */
-    public void setPreserveLastModified(boolean preserveLastModified) {
-        this.preserveLastModified = preserveLastModified
-    }
-
-
-    /**
-     * Set to true to transmit only files that are new or changed from their
-     * remote counterparts. The default is to transmit all files.
-     *
-     * @param depends if true only transfer newer files.
-     */
-    public void setDepends(boolean depends) {
-        this.newerOnly = depends
-    }
-
-
-    /**
-     * Sets the remote file separator character. This normally defaults to the
-     * Unix standard forward slash, but can be manually overridden using this
-     * call if the remote server requires some other separator. Only the first
-     * character of the string is used.
-     *
-     * @param separator the file separator on the remote system.
-     */
-    public void setSeparator(String separator) {
-        remoteFileSep = separator
-    }
-
-
-    /**
-     * Sets the file permission mode (Unix only) for files sent to the
-     * server.
-     *
-     * @param theMode unix style file mode for the files sent to the remote
-     *        system.
-     */
-    public void setChmod(String theMode) {
-        this.chmod = theMode
-    }
-
-
-    /**
-     * Sets the default mask for file creation on a unix server.
-     *
-     * @param theUmask unix style umask for files created on the remote server.
-     */
-    public void setUmask(String theUmask) {
-        this.umask = theUmask
-    }
 
 
     /**
@@ -1334,201 +1263,6 @@ public class FtpTask {
     }
 
 
-    /**
-     * Sets the FTP action to be taken. Currently accepts "put", "get", "del",
-     * "mkdir", "chmod", "list", and "site".
-     *
-     * @param action the FTP action to be performed.
-     *
-     * @throws BuildException if the action is not a valid action.
-     */
-    public void setAction(Action action) throws BuildException {
-        this.action = action.getAction()
-    }
-
-
-    /**
-     * The output file for the "list" action. This attribute is ignored for
-     * any other actions.
-     *
-     * @param listing file in which to store the listing.
-     */
-    public void setListing(File listing) {
-        this.listing = listing
-    }
-
-
-    /**
-     * If true, enables unsuccessful file put, delete and get
-     * operations to be skipped with a warning and the remainder
-     * of the files still transferred.
-     *
-     * @param skipFailedTransfers true if failures in transfers are ignored.
-     */
-    public void setSkipFailedTransfers(boolean skipFailedTransfers) {
-        this.skipFailedTransfers = skipFailedTransfers
-    }
-
-
-    /**
-     * set the flag to skip errors on directory creation.
-     * (and maybe later other server specific errors)
-     *
-     * @param ignoreNoncriticalErrors true if non-critical errors should not
-     *        cause a failure.
-     */
-    public void setIgnoreNoncriticalErrors(boolean ignoreNoncriticalErrors) {
-        this.ignoreNoncriticalErrors = ignoreNoncriticalErrors
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /**
-     * Defines how many times to retry executing FTP command before giving up.
-     * Default is 0 - try once and if failure then give up.
-     *
-     * @param retriesAllowed number of retries to allow.  -1 means
-     * keep trying forever.
-     */
-    public void setRetriesAllowed(String retriesAllowed) {
-        if ("FOREVER".equalsIgnoreCase(retriesAllowed)) {
-            this.retriesAllowed = Retryable.RETRY_FOREVER
-        } else {
-            try {
-                int retries = Integer.parseInt(retriesAllowed)
-                if (retries < Retryable.RETRY_FOREVER) {
-                    throw new BuildException(
-                                             "Invalid value for retriesAllowed attribute: "
-                                             + retriesAllowed)
-
-                }
-                this.retriesAllowed = retries
-            } catch (NumberFormatException px) {
-                throw new BuildException(
-                                         "Invalid value for retriesAllowed attribute: "
-                                         + retriesAllowed)
-
-            }
-
-        }
-    }
-    /**
-     * @return Returns the defaultDateFormatConfig.
-     */
-    public String getDefaultDateFormatConfig() {
-        return defaultDateFormatConfig
-    }
-    /**
-     * @return Returns the recentDateFormatConfig.
-     */
-    public String getRecentDateFormatConfig() {
-        return recentDateFormatConfig
-    }
-    /**
-     * @return Returns the serverLanguageCodeConfig.
-     */
-    public String getServerLanguageCodeConfig() {
-        return serverLanguageCodeConfig.getValue()
-    }
-    /**
-     * @return Returns the serverTimeZoneConfig.
-     */
-    public String getServerTimeZoneConfig() {
-        return serverTimeZoneConfig
-    }
-    /**
-     * @return Returns the shortMonthNamesConfig.
-     */
-    public String getShortMonthNamesConfig() {
-        return shortMonthNamesConfig
-    }
-    /**
-     * @return Returns the timestampGranularity.
-     */
-    Granularity getTimestampGranularity() {
-        return timestampGranularity
-    }
-    /**
-     * Sets the timestampGranularity attribute
-     * @param timestampGranularity The timestampGranularity to set.
-     */
-    public void setTimestampGranularity(Granularity timestampGranularity) {
-        if (null == timestampGranularity || "".equals(timestampGranularity.getValue())) {
-            return
-        }
-        this.timestampGranularity = timestampGranularity
-    }
-    /**
-     * Sets the siteCommand attribute.  This attribute
-     * names the command that will be executed if the action
-     * is "site".
-     * @param siteCommand The siteCommand to set.
-     */
-    public void setSiteCommand(String siteCommand) {
-        this.siteCommand = siteCommand
-    }
-    /**
-     * Sets the initialSiteCommand attribute.  This attribute
-     * names a site command that will be executed immediately
-     * after connection.
-     * @param initialCommand The initialSiteCommand to set.
-     */
-    public void setInitialSiteCommand(String initialCommand) {
-        this.initialSiteCommand = initialCommand
-    }
-
-    /**
-     * Whether to verify that data and control connections are
-     * connected to the same remote host.
-     *
-     * @since Ant 1.8.0
-     */
-    public void setEnableRemoteVerification(boolean b) {
-        enableRemoteVerification = b
-    }
-
-    /**
-     * Checks to see that all required parameters are set.
-     *
-     * @throws BuildException if the configuration is not valid.
-     */
-    protected void checkAttributes() throws BuildException {
-        if (server == null) {
-            throw new BuildException("server attribute must be set!")
-        }
-        if (userid == null) {
-            throw new BuildException("userid attribute must be set!")
-        }
-        if (password == null) {
-            throw new BuildException("password attribute must be set!")
-        }
-
-        if ((action == Action.LIST_FILES) && (listing == null)) {
-            throw new BuildException("listing attribute must be set for list action!")
-        }
-
-        if (action == Action.MK_DIR && remotedir == null) {
-            throw new BuildException("remotedir attribute must be set for mkdir action!")
-        }
-
-        if (action == Action.CHMOD && chmod == null) {
-            throw new BuildException("chmod attribute must be set for chmod action!")
-        }
-        if (action == Action.SITE_CMD && siteCommand == null) {
-            throw new BuildException("sitecommand attribute must be set for site action!")
-        }
-    }
 
     /**
      * Executable a retryable object.
@@ -1613,8 +1347,7 @@ public class FtpTask {
                 final BufferedWriter fbw = bw
                 final String fdir = dir
                 if (this.newerOnly) {
-                    this.granularityMillis =
-                        this.timestampGranularity.getMilliseconds(action)
+                    this.granularityMillis = this.timestampGranularity.getMilliseconds(action)
                 }
                 for (int i = 0; i < dsfiles.length; i++) {
                     final String dsfile = dsfiles[i]
@@ -2252,8 +1985,8 @@ public class FtpTask {
             log.trace("connected")
             log.trace("logging in to FTP server")
 
-            if ((this.account != null && !ftp.login(userid, password, account))
-                || (this.account == null && !ftp.login(userid, password))) {
+            if ((this.account != null && !ftp.login(userId, password, account))
+                || (this.account == null && !ftp.login(userId, password))) {
                 throw new BuildException("Could not login to FTP server")
             }
 
@@ -2315,9 +2048,9 @@ public class FtpTask {
                 final FTPClient lftp = ftp
                 executeRetryable(h, new Retryable() {
                         public void execute() throws IOException {
-                            makeRemoteDir(lftp, remotedir)
+                            makeRemoteDir(lftp, remoteDir)
                         }
-                    }, remotedir)
+                    }, remoteDir)
             } else if (action == Action.SITE_CMD) {
                 RetryHandler h = new RetryHandler(this.retriesAllowed, this)
                 final FTPClient lftp = ftp
@@ -2327,9 +2060,9 @@ public class FtpTask {
                         }
                     }, "Site Command: " + this.siteCommand)
             } else {
-                if (remotedir != null) {
-                    log.trace("changing the remote directory to ${remotedir}")
-                    ftp.changeWorkingDirectory(remotedir)
+                if (remoteDir != null) {
+                    log.trace("changing the remote directory to ${remoteDir}")
+                    ftp.changeWorkingDirectory(remoteDir)
                     if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
                         throw new BuildException("could not change remote directory: ${ftp.getReplyString()}")
                     }
@@ -2356,62 +2089,6 @@ public class FtpTask {
                 }
             }
         }
-    }
-
-
-    /**
-     * represents one of the valid timestamp adjustment values
-     * recognized by the <code>timestampGranularity</code> attribute.<p>
-
-     * A timestamp adjustment may be used in file transfers for checking
-     * uptodateness. MINUTE means to add one minute to the server
-     * timestamp.  This is done because FTP servers typically list
-     * timestamps HH:mm and client FileSystems typically use HH:mm:ss.
-     *
-     * The default is to use MINUTE for PUT actions and NONE for GET
-     * actions, since GETs have the <code>preserveLastModified</code>
-     * option, which takes care of the problem in most use cases where
-     * this level of granularity is an issue.
-     *
-     */
-    public static class Granularity extends EnumeratedAttribute {
-
-        private static final String[] VALID_GRANULARITIES = [
-            "", "MINUTE", "NONE"
-        ]
-
-        /**
-         * Get the valid values.
-         * @return the list of valid Granularity values
-         */
-        public String[] getValues() {
-            return VALID_GRANULARITIES
-        }
-        /**
-         * returns the number of milliseconds associated with
-         * the attribute, which can vary in some cases depending
-         * on the value of the action parameter.
-         * @param action SEND_FILES or GET_FILES
-         * @return the number of milliseconds associated with
-         * the attribute, in the context of the supplied action
-         */
-        public long getMilliseconds(Action action) {
-            String granularityU = getValue().toUpperCase(Locale.ENGLISH)
-            if ("".equals(granularityU)) {
-                if (action == Action.SEND_FILES) {
-                    return GRANULARITY_MINUTE
-                }
-            } else if ("MINUTE".equals(granularityU)) {
-                return GRANULARITY_MINUTE
-            }
-            return 0L
-        }
-        static final Granularity getDefault() {
-            Granularity g = new Granularity()
-            g.setValue("")
-            return g
-        }
-
     }
 
 }
