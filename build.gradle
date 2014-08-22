@@ -13,8 +13,10 @@ repositories {
 
 dependencies {
 	compile gradleApi()
+	compile 'commons-net:commons-net:3.3'
 
 	testCompile 'com.bancvue:gradle-core-test:1.1'
+	testCompile 'org.mockftpserver:MockFtpServer:2.5'
 	testCompile('org.spockframework:spock-core:0.7-groovy-2.0') {
 		exclude group: 'org.codehaus.groovy'
 	}
