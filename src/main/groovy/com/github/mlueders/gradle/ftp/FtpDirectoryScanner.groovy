@@ -49,8 +49,7 @@ class FtpDirectoryScanner extends DirectoryScanner {
 	public void scan() {
 		if (includes == null) {
 			// No includes supplied, so set it to 'matches all'
-			includes = new String[1]
-			includes[0] = "**"
+			includes = ["**"]
 		}
 		if (excludes == null) {
 			excludes = new String[0]
@@ -95,6 +94,10 @@ class FtpDirectoryScanner extends DirectoryScanner {
 				throw new GradleException("could not read current ftp directory", e)
 			}
 		}
+		if (!ftp.changeWorkingDirectory(remoteDir)) {
+			return
+		}
+
 		AntFTPFile baseFTPFile = new AntFTPRootFile(ftp, remoteDir)
 		rootPath = baseFTPFile.getAbsolutePath()
 		// construct it
@@ -117,8 +120,7 @@ class FtpDirectoryScanner extends DirectoryScanner {
 				if (myfile.exists()) {
 					forceRemoteSensitivityCheck()
 					if (remoteSensitivityChecked && remoteSystemCaseSensitive && isFollowSymlinks()) {
-						// cool case,
-						//we do not need to scan all the subdirs in the relative path
+						// cool case, we do not need to scan all the subdirs in the relative path
 						path = myfile.getFastRelativePath()
 					} else {
 						// may be on a case insensitive file system.  We want
@@ -795,13 +797,10 @@ class FtpDirectoryScanner extends DirectoryScanner {
 	 * @since Ant 1.6
 	 */
 	private class AntFTPRootFile extends AntFTPFile {
-		private String remotedir
 
-		public AntFTPRootFile(FTPClient aclient, String remotedir) {
-			super(aclient, null, remotedir)
-			this.remotedir = remotedir
-			this.getClient().changeWorkingDirectory(this.remotedir)
-			this.setCurpwd(this.getClient().printWorkingDirectory())
+		public AntFTPRootFile(FTPClient client, String remotedir) {
+			super(client, null, remotedir)
+			setCurpwd(client.printWorkingDirectory())
 		}
 
 		public String getAbsolutePath() {

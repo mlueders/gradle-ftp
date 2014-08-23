@@ -22,22 +22,23 @@ class FtpTaskSpec extends AbstractProjectSpecification {
 		ftpBaseDir = projectFS.file('ftp')
 		ftpBaseDirPath = ftpBaseDir.absolutePath
 
-		ftpFileSystem = new UnixFakeFileSystem();
-		ftpFileSystem.add(new DirectoryEntry(ftpBaseDir.absolutePath));
-		ftpFileSystem.add(new FileEntry(ftpBaseDir.file('base-file').absolutePath, 'base-file contents'));
+		ftpFileSystem = new UnixFakeFileSystem()
+		ftpFileSystem.add(new DirectoryEntry(ftpBaseDir.absolutePath))
+		ftpFileSystem.add(new FileEntry(ftpBaseDir.file('base-file').absolutePath, 'base-file contents'))
 
-		FakeFtpServer fakeFtpServer = new FakeFtpServer();
-		fakeFtpServer.setServerControlPort(0);
-		fakeFtpServer.addUserAccount(new UserAccount('user', 'password', ftpBaseDir.absolutePath));
-		fakeFtpServer.setFileSystem(ftpFileSystem);
-		fakeFtpServer.start();
+		UserAccount userAccount = new UserAccount('user', 'password', ftpBaseDir.absolutePath)
+		FakeFtpServer fakeFtpServer = new FakeFtpServer()
+		fakeFtpServer.setServerControlPort(0)
+		fakeFtpServer.addUserAccount(userAccount)
+		fakeFtpServer.setFileSystem(ftpFileSystem)
+		fakeFtpServer.start()
 
 		ftpTask = project.tasks.create('ftpTask', FtpTask)
 		ftpTask.configure {
-			userId = 'user'
-			password = 'password'
 			server = 'localhost'
 			port = fakeFtpServer.getServerControlPort()
+			userId = userAccount.getUsername()
+			password = userAccount.getPassword()
 		}
 	}
 

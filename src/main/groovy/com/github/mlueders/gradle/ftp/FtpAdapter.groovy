@@ -121,7 +121,7 @@ class FtpAdapter {
 		}
 	}
 
-	void initialize() {
+	void open() {
 		checkAttributes()
 
 		if (clientConfig) {

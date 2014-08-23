@@ -568,7 +568,7 @@ public class FtpTask extends DefaultTask {
 	    ftpAdapter = new FtpAdapter(config)
 
         try {
-	        ftpAdapter.initialize()
+	        ftpAdapter.open()
 
             // If the action is Action.MK_DIR, then the specified remote
             // directory is the directory to create.
