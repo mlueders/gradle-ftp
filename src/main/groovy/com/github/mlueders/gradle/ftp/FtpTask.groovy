@@ -175,8 +175,6 @@ public class FtpTask extends DefaultTask {
 	private static final SimpleDateFormat TIMESTAMP_LOGGING_SDF =
 			new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
-	private static final FileUtils FILE_UTILS = FileUtils.getFileUtils()
-
 	private long granularityMillis = 0L
 
 	private int transferred = 0
@@ -548,7 +546,7 @@ public class FtpTask extends DefaultTask {
                     outstream = null
                     FTPFile[] remote = ftpClient.listFiles(resolveFile(filename))
                     if (remote.length > 0) {
-                        FILE_UTILS.setFileLastModified(file, remote[0].getTimestamp().getTime().getTime())
+	                    file.setLastModified(remote[0].getTimestamp().getTime().getTime())
                     }
                 }
             }

@@ -1,6 +1,7 @@
 package com.github.mlueders.gradle.ftp
 
 import groovy.util.logging.Slf4j
+import java.text.SimpleDateFormat
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPClientConfig
@@ -84,7 +85,6 @@ class FtpAdapter {
 		String remoteFileSep = "/"
 	}
 
-
 	/** Default port for FTP */
 	private static final int DEFAULT_FTP_PORT = 21
 
@@ -95,7 +95,6 @@ class FtpAdapter {
 	 * to create a directory has failed because the directory already exists.
 	 */
 	private static List<Integer> DIRECTORY_ALREADY_EXISTS_RETURN_CODES = [521, 550, 553]
-
 
 	@Delegate
 	private Config config
@@ -156,19 +155,19 @@ class FtpAdapter {
 			}
 		}
 
-        // If an initial command was configured then send it.
-        // Some FTP servers offer different modes of operation,
-        // E.G. switching between a UNIX file system mode and a legacy file system.
-        if (this.initialSiteCommand != null) {
-            // TODO: retryable
-            doSiteCommand(initialSiteCommand)
-        }
+		// If an initial command was configured then send it.
+		// Some FTP servers offer different modes of operation,
+		// E.G. switching between a UNIX file system mode and a legacy file system.
+		if (this.initialSiteCommand != null) {
+			// TODO: retryable
+			doSiteCommand(initialSiteCommand)
+		}
 
-        // For a unix ftp server you can set the default mask for all files created.
-        if (umask != null) {
-            // TODO: retryable
-            doSiteCommand("umask " + umask)
-        }
+		// For a unix ftp server you can set the default mask for all files created.
+		if (umask != null) {
+			// TODO: retryable
+			doSiteCommand("umask " + umask)
+		}
 	}
 
 	void close() {
