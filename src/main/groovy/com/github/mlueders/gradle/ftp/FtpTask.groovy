@@ -3,7 +3,6 @@ package com.github.mlueders.gradle.ftp
 import groovy.transform.EqualsAndHashCode
 import groovy.util.logging.Slf4j
 
-import java.text.SimpleDateFormat
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPFile
 import org.apache.commons.net.ftp.FTPReply
@@ -92,10 +91,12 @@ public class FtpTask extends DefaultTask {
 	 * option, which takes care of the problem in most use cases where
 	 * this level of granularity is an issue.
 	 */
-	public static enum Granularity {
+	public static enum TimestampGranularity {
 		UNSET,
 		MINUTE,
 		NONE
+
+		private static final long GRANULARITY_MINUTE = 60000L
 
 		public long getMilliseconds(Action action) {
 			if ((this == MINUTE) || ((this == UNSET) && (action == Action.SEND_FILES))) {
@@ -132,21 +133,10 @@ public class FtpTask extends DefaultTask {
 	 */
     boolean newerOnly = false
 	/**
-	 * Number of milliseconds to add to the time on the remote machine to get the time on the local machine.
-	 * Use in conjunction with <code>newerOnly</code>
-	 */
-	long timeDiffMillis = 0
-	/**
-	 * Automatically determine the time difference between local and remote machine, defaults to false.
-	 *
-	 * This requires right to create and delete a temporary file in the remote directory.
-	 */
-	boolean timeDiffAuto = false
-	/**
 	 * Used in conjunction with <code>newerOnly</code>
-	 * @see Granularity
+	 * @see TimestampGranularity
 	 */
-	Granularity timestampGranularity = Granularity.UNSET
+	TimestampGranularity timestampGranularity = TimestampGranularity.UNSET
 	/**
 	 * If true, modification times for "gotten" files will be preserved.
 	 * Defaults to false.
@@ -167,19 +157,20 @@ public class FtpTask extends DefaultTask {
 	private List<FileSet> filesets = []
 
 
-	/** adjust uptodate calculations where server timestamps are HH:mm and client's
-	 * are HH:mm:ss */
-	private static final long GRANULARITY_MINUTE = 60000L
-
-	/** Date formatter used in logging, note not thread safe! */
-	private static final SimpleDateFormat TIMESTAMP_LOGGING_SDF =
-			new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-
-	private long granularityMillis = 0L
-
 	private int transferred = 0
 	private int skipped = 0
 
+	public void fileset(String dirName, Closure cl) {
+		fileset(ant.fileset(dir: dirName, cl))
+	}
+
+	public void fileset(Closure cl) {
+		fileset(ant.fileset(cl))
+	}
+
+	public void fileset(FileSet fileset) {
+		filesets.add(fileset)
+	}
 
 	/**
 	 * Checks to see that all required parameters are set.
@@ -227,7 +218,7 @@ public class FtpTask extends DefaultTask {
                 }
             } else {
                 if (this.newerOnly) {
-                    this.granularityMillis = this.timestampGranularity.getMilliseconds(action)
+	                ftpAdapter.granularityMillis = this.timestampGranularity.getMilliseconds(action)
                 }
 	            for (TransferableFile file : filesToTransfer) {
 	                // TODO: retryable
@@ -260,19 +251,6 @@ public class FtpTask extends DefaultTask {
         return filesToTransfer.size()
     }
 
-
-	public void fileset(String dirName, Closure cl) {
-		fileset(ant.fileset(dir: dirName, cl))
-	}
-
-	public void fileset(Closure cl) {
-		fileset(ant.fileset(cl))
-	}
-
-	public void fileset(FileSet fileset) {
-		filesets.add(fileset)
-	}
-
     /**
      * Sends all files specified by the configured filesets to the remote server.
      *
@@ -302,14 +280,6 @@ public class FtpTask extends DefaultTask {
 	private static class TransferableFile {
 		String baseDir
 		String relativePath
-
-		String getPath() {
-			asFile().path
-		}
-
-		File asFile() {
-			new File(baseDir, relativePath)
-		}
 	}
 
 	private List<TransferableFile> getFilesToTransfer() {
@@ -373,60 +343,6 @@ public class FtpTask extends DefaultTask {
     }
 
     /**
-     * Checks to see if the remote file is current as compared with the local
-     * file. Returns true if the target file is up to date.
-     * @param ftp ftpclient
-     * @param localFile local file
-     * @param remoteFile remote file
-     * @return true if the target file is up to date
-     * @throws GradleException if the date of the remote files cannot be found and the action is
-     * GET_FILES
-     */
-    protected boolean isUpToDate(FTPClient ftp, File localFile, String remoteFile) {
-        log.debug("checking date for ${remoteFile}")
-
-        FTPFile[] files = ftp.listFiles(remoteFile)
-
-        // For Microsoft's Ftp-Service an Array with length 0 is
-        // returned if configured to return listings in "MS-DOS"-Format
-        if (files == null || files.length == 0) {
-            // If we are sending files, then assume out of date.
-            // If we are getting files, then throw an error
-
-            if (action == Action.SEND_FILES) {
-                log.debug("Could not date test remote file: ${remoteFile} assuming out of date.")
-                return false
-            } else {
-                throw new GradleException("could not date test remote file: ${ftp.getReplyString()}")
-            }
-        }
-
-        long remoteTimestamp = files[0].getTimestamp().getTime().getTime()
-        long localTimestamp = localFile.lastModified()
-        long adjustedRemoteTimestamp = remoteTimestamp + this.timeDiffMillis + this.granularityMillis
-
-	    log.debug("   [${formatDate(localTimestamp)}] local")
-	    String message = "   [${formatDate(adjustedRemoteTimestamp)}] remote"
-        if (remoteTimestamp != adjustedRemoteTimestamp) {
-	        message += " - (raw: ${formatDate(remoteTimestamp)})"
-        }
-	    log.debug(message)
-
-        if (this.action == Action.SEND_FILES) {
-            return adjustedRemoteTimestamp >= localTimestamp
-        } else {
-            return localTimestamp >= adjustedRemoteTimestamp
-        }
-    }
-
-	private String formatDate(long timestamp) {
-		synchronized(TIMESTAMP_LOGGING_SDF) {
-			TIMESTAMP_LOGGING_SDF.format(new Date(timestamp))
-		}
-	}
-
-
-    /**
      * Sends a single file to the remote host. <code>filename</code> may
      * contain a relative path specification. When this is the case, <code>sendFile</code>
      * will attempt to create any necessary parent directories before sending
@@ -443,14 +359,19 @@ public class FtpTask extends DefaultTask {
     protected void sendFile(String dir, String filename) {
         InputStream instream = null
 	    FTPClient ftpClient = ftpAdapter.ftp
+	    String remoteFilePath = resolveFile(filename)
 
         try {
-            // TODO - why not simply new File(dir, filename)?
-            File file = getAntProject().resolveFile(new File(dir, filename).getPath())
+	        // TODO - why not simply new File(dir, filename)?
+	        File file = getAntProject().resolveFile(new File(dir, filename).getPath())
 
-            if (newerOnly && isUpToDate(ftpClient, file, resolveFile(filename))) {
-                return
-            }
+	        try {
+		        if (newerOnly && ftpAdapter.isRemoteFileOlder(file, remoteFilePath)) {
+			        return
+		        }
+	        } catch(GradleException ex) {
+		        log.debug("Could not date test remote file: ${remoteFilePath} assuming out of date.")
+	        }
 
             if (verbose) {
                 log.info("transferring ${file.getAbsolutePath()}")
@@ -460,7 +381,7 @@ public class FtpTask extends DefaultTask {
 
             ftpAdapter.createParents(filename)
 
-            ftpClient.storeFile(resolveFile(filename), instream)
+            ftpClient.storeFile(remoteFilePath, instream)
 
             boolean success = FTPReply.isPositiveCompletion(ftpClient.getReplyCode())
 
@@ -477,7 +398,7 @@ public class FtpTask extends DefaultTask {
             } else {
                 // see if we should issue a chmod command
                 if (chmod != null) {
-                    ftpAdapter.doSiteCommand("chmod ${chmod} ${resolveFile(filename)}")
+                    ftpAdapter.doSiteCommand("chmod ${chmod} ${remoteFilePath}")
                 }
                 log.debug("File ${file.getAbsolutePath()} copied to ${server}")
                 transferred++
@@ -507,12 +428,14 @@ public class FtpTask extends DefaultTask {
      * and the file cannot be retrieved.
      */
     protected void getFile(String dir, String filename) throws GradleException {
-	    FTPClient ftpClient = ftpAdapter.ftp
         OutputStream outstream = null
+	    FTPClient ftpClient = ftpAdapter.ftp
+	    String remoteFilePath = resolveFile(filename)
+
         try {
 	        File file = getAntProject().resolveFile(new File(dir, filename).getPath())
 
-            if (newerOnly && isUpToDate(ftpClient, file, resolveFile(filename))) {
+            if (newerOnly && ftpAdapter.isLocalFileOlder(file, remoteFilePath)) {
                 return
             }
 
@@ -526,7 +449,7 @@ public class FtpTask extends DefaultTask {
                 pdir.mkdirs()
             }
             outstream = new BufferedOutputStream(new FileOutputStream(file))
-            ftpClient.retrieveFile(resolveFile(filename), outstream)
+            ftpClient.retrieveFile(remoteFilePath, outstream)
 
             if (!FTPReply.isPositiveCompletion(ftpClient.getReplyCode())) {
                 String s = "could not get file: " + ftpClient.getReplyString()
@@ -544,7 +467,7 @@ public class FtpTask extends DefaultTask {
                 if (preserveLastModified) {
                     outstream.close()
                     outstream = null
-                    FTPFile[] remote = ftpClient.listFiles(resolveFile(filename))
+                    FTPFile[] remote = ftpClient.listFiles(remoteFilePath)
                     if (remote.length > 0) {
 	                    file.setLastModified(remote[0].getTimestamp().getTime().getTime())
                     }
@@ -579,10 +502,6 @@ public class FtpTask extends DefaultTask {
             } else {
                 if (remoteDir != null) {
 	                ftpAdapter.changeWorkingDirectory(remoteDir)
-                }
-                if (newerOnly && timeDiffAuto) {
-                    // in this case we want to find how much time span there is between local and remote
-                    timeDiffMillis = ftpAdapter.getTimeDiff()
                 }
                 log.info("${action.actionString} ${action.targetString}")
                 transferFiles()

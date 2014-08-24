@@ -1,7 +1,6 @@
 package com.github.mlueders.gradle.ftp
 
 import groovy.util.logging.Slf4j
-import java.text.SimpleDateFormat
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPClientConfig
@@ -99,6 +98,7 @@ class FtpAdapter {
 	@Delegate
 	private Config config
 	private FTPClient ftp
+	private LastModifiedChecker lastModifiedChecker
 	private int transferred = 0
 	private int skipped = 0
 	private Set dirCache = new HashSet()
@@ -106,6 +106,7 @@ class FtpAdapter {
 	public FtpAdapter(Config config) {
 		this.config = config
 		this.ftp = new FTPClient()
+		this.lastModifiedChecker = new LastModifiedChecker(ftp)
 	}
 
 	private void checkAttributes() throws GradleException {
@@ -335,63 +336,6 @@ class FtpAdapter {
 	}
 
 	/**
-	 * auto find the time difference between local and remote
-	 * @return number of millis to add to remote time to make it comparable to local time
-	 * @since ant 1.6
-	 */
-	long getTimeDiff() {
-		long returnValue = 0
-		File tempFile = findTempFileName()
-		try {
-			long localTimeStamp = tempFile.lastModified()
-			BufferedInputStream instream = new BufferedInputStream(new FileInputStream(tempFile))
-			ftp.storeFile(tempFile.getName(), instream)
-			instream.close()
-			boolean success = FTPReply.isPositiveCompletion(ftp.getReplyCode())
-			if (success) {
-				FTPFile[] ftpFiles = ftp.listFiles(tempFile.getName())
-				if (ftpFiles.length == 1) {
-					long remoteTimeStamp = ftpFiles[0].getTimestamp().getTime().getTime()
-					returnValue = localTimeStamp - remoteTimeStamp
-				}
-				ftp.deleteFile(ftpFiles[0].getName())
-			}
-			tempFile.delete()
-		} catch (Exception e) {
-			throw new GradleException("Failed to auto calculate time difference", e)
-		}
-		return returnValue
-	}
-
-	/**
-	 *  find a suitable name for local and remote temporary file
-	 */
-	private File findTempFileName() {
-		FTPFile[] theFiles = null
-		final int maxIterations = 1000
-		for (int counter = 1; counter < maxIterations; counter++) {
-			File localFile = File.createTempFile("ant${Integer.toString(counter)}", "tmp")
-			String fileName = localFile.getName()
-			boolean found = false
-			if (theFiles == null) {
-				theFiles = ftp.listFiles()
-			}
-			for (int counter2 = 0; counter2 < theFiles.length; counter2++) {
-				if (theFiles[counter2] != null
-						&& theFiles[counter2].getName().equals(fileName)) {
-					found = true
-					break
-				}
-			}
-			if (!found) {
-				localFile.deleteOnExit()
-				return localFile
-			}
-		}
-		throw new GradleException("Failed to find suitable remote file within ${maxIterations} iterations")
-	}
-
-	/**
 	 * Delete a directory, if empty, from the remote host.
 	 * @param dirpath directory to delete
 	 * @throws GradleException if skipFailedTransfers is set to false and the deletion could not be done
@@ -480,6 +424,19 @@ class FtpAdapter {
 			log.debug("File ${filename} deleted from ${server}")
 			transferred++
 		}
+	}
+
+
+	boolean setGranularityMillis(long granularityMillis) {
+		lastModifiedChecker.granularityMillis = granularityMillis
+	}
+
+	boolean isRemoteFileOlder(File localFile, String remotePath) {
+		lastModifiedChecker.isRemoteFileOlder(localFile, remotePath)
+	}
+
+	boolean isLocalFileOlder(File localFile, String remotePath) {
+		lastModifiedChecker.isLocalFileOlder(localFile, remotePath)
 	}
 
 }
