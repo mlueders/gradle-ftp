@@ -128,6 +128,8 @@ class FtpAdapter {
 			ftp.configure(clientConfig)
 		}
 
+		lastModifiedChecker.initialize()
+
 		log.debug("opening FTP connection to ${server}")
 		ftp.setRemoteVerificationEnabled(enableRemoteVerification)
 		ftp.connect(server, port)
@@ -290,7 +292,7 @@ class FtpAdapter {
 			String cwd = ftp.printWorkingDirectory()
 			String parent = dir.getParent()
 			if (parent != null) {
-				if (!ftp.changeWorkingDirectory(resolveFile(parent))) {
+				if (!ftp.changeWorkingDirectory(resolveRemotePath(parent))) {
 					throw new GradleException("could not change to directory: ${ftp.getReplyString()}")
 				}
 			}
@@ -300,7 +302,7 @@ class FtpAdapter {
 				// check if dir exists by trying to change into it.
 				if (!ftp.changeWorkingDirectory(dir.getName())) {
 					// could not change to it - try to create it
-					log.debug("creating remote directory ${resolveFile(dir.getPath())}")
+					log.debug("creating remote directory ${resolveRemotePath(dir.getPath())}")
 					if (!ftp.makeDirectory(dir.getName())) {
 						handleMkDirFailure()
 					}
@@ -345,7 +347,7 @@ class FtpAdapter {
 			log.info("removing ${dirpath}")
 		}
 
-		if (!ftp.removeDirectory(resolveFile(dirpath))) {
+		if (!ftp.removeDirectory(resolveRemotePath(dirpath))) {
 			String s = "could not remove directory: ${ftp.getReplyString()}"
 
 			if (skipFailedTransfers) {
@@ -371,7 +373,7 @@ class FtpAdapter {
 	 *
 	 * @return the filename as it will appear on the server.
 	 */
-	private String resolveFile(String file) {
+	String resolveRemotePath(String file) {
 		return file.replace(LINE_SEPARATOR, remoteFileSep)
 	}
 
@@ -393,7 +395,7 @@ class FtpAdapter {
 			log.info("listing ${filename}")
 		}
 
-		FTPFile[] ftpfiles = ftp.listFiles(resolveFile(filename))
+		FTPFile[] ftpfiles = ftp.listFiles(resolveRemotePath(filename))
 		if (ftpfiles != null && ftpfiles.length > 0) {
 			listingFile << "${ftpfiles[0].toString()}${LINE_SEPARATOR}"
 			transferred++
@@ -411,7 +413,7 @@ class FtpAdapter {
 			log.info("deleting ${filename}")
 		}
 
-		if (!ftp.deleteFile(resolveFile(filename))) {
+		if (!ftp.deleteFile(resolveRemotePath(filename))) {
 			String s = "could not delete file: " + ftp.getReplyString()
 
 			if (skipFailedTransfers) {

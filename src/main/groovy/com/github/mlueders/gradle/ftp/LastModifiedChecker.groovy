@@ -43,6 +43,10 @@ class LastModifiedChecker {
 		this.ftp = ftp
 	}
 
+	void initialize() {
+		timeDiffMillis = timeDiffAuto ? calculateTimeDiff() : 0l
+	}
+
 	boolean isRemoteFileOlder(File localFile, String remotePath) {
 		def (long localTimestamp, long remoteTimestamp) = isUpToDate(localFile, remotePath)
 		localTimestamp < remoteTimestamp
@@ -67,11 +71,10 @@ class LastModifiedChecker {
 		log.debug("checking date for ${remoteFile}")
 
 		if (timeDiffMillis == null) {
-			timeDiffMillis = timeDiffAuto ? calculateTimeDiff() : 0l
+			throw new IllegalStateException("Application error: must call initialize() before invoking isUpToDate")
 		}
 
 		FTPFile[] files = ftp.listFiles(remoteFile)
-
 		// For Microsoft's Ftp-Service an Array with length 0 is
 		// returned if configured to return listings in "MS-DOS"-Format
 		if (files == null || files.length == 0) {

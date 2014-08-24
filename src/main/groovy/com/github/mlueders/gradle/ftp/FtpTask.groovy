@@ -295,7 +295,7 @@ public class FtpTask extends DefaultTask {
 		if (action == Action.SEND_FILES) {
 			ds = fileset.getDirectoryScanner(getAntProject())
 		} else {
-			ds = new FtpDirectoryScanner(getFtpClient(), remoteDir, remoteFileSep)
+			ds = new FtpDirectoryScanner(ftpAdapter.ftp, remoteDir, remoteFileSep)
 			fileset.setupDirectoryScanner(ds, getAntProject())
 			ds.setFollowSymlinks(fileset.isFollowSymlinks())
 			ds.scan()
@@ -321,27 +321,6 @@ public class FtpTask extends DefaultTask {
 		}
 	}
 
-	private FTPClient getFtpClient() {
-		ftpAdapter.ftp
-	}
-
-
-
-	/**
-     * Correct a file path to correspond to the remote host requirements. This
-     * implementation currently assumes that the remote end can handle
-     * Unix-style paths with forward-slash separators. This can be overridden
-     * with the <code>separator</code> task parameter. No attempt is made to
-     * determine what syntax is appropriate for the remote host.
-     *
-     * @param file the remote file name to be resolved
-     *
-     * @return the filename as it will appear on the server.
-     */
-    protected String resolveFile(String file) {
-	    return file.replace(System.getProperty("file.separator"), remoteFileSep)
-    }
-
     /**
      * Sends a single file to the remote host. <code>filename</code> may
      * contain a relative path specification. When this is the case, <code>sendFile</code>
@@ -359,7 +338,7 @@ public class FtpTask extends DefaultTask {
     protected void sendFile(String dir, String filename) {
         InputStream instream = null
 	    FTPClient ftpClient = ftpAdapter.ftp
-	    String remoteFilePath = resolveFile(filename)
+	    String remoteFilePath = ftpAdapter.resolveRemotePath(filename)
 
         try {
 	        // TODO - why not simply new File(dir, filename)?
@@ -430,7 +409,7 @@ public class FtpTask extends DefaultTask {
     protected void getFile(String dir, String filename) throws GradleException {
         OutputStream outstream = null
 	    FTPClient ftpClient = ftpAdapter.ftp
-	    String remoteFilePath = resolveFile(filename)
+	    String remoteFilePath = ftpAdapter.resolveRemotePath(filename)
 
         try {
 	        File file = getAntProject().resolveFile(new File(dir, filename).getPath())
