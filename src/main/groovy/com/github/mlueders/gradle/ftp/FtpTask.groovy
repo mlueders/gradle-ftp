@@ -2,10 +2,7 @@ package com.github.mlueders.gradle.ftp
 
 import groovy.transform.EqualsAndHashCode
 import groovy.util.logging.Slf4j
-
-import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPFile
-import org.apache.commons.net.ftp.FTPReply
 import org.apache.tools.ant.DirectoryScanner
 import org.apache.tools.ant.types.FileSet
 import org.apache.tools.ant.util.FileUtils
@@ -35,10 +32,6 @@ import org.gradle.api.GradleException
  */
 @Slf4j
 public class FtpTask extends DefaultTask {
-
-	@Delegate
-	private FtpAdapter.Config config = new FtpAdapter.Config()
-	private FtpAdapter ftpAdapter
 
 	/**
 	 * an action to perform, one of
@@ -76,6 +69,12 @@ public class FtpTask extends DefaultTask {
 		String getTargetString() {
 			return targetString
 		}
+	}
+
+	@EqualsAndHashCode
+	private static class TransferableFile {
+		String baseDir
+		String relativePath
 	}
 
 	/**
@@ -154,11 +153,10 @@ public class FtpTask extends DefaultTask {
     int retriesAllowed = 0
 
 
+	@Delegate
+	private FtpAdapter.Config config = new FtpAdapter.Config()
+	private FtpAdapter ftpAdapter
 	private List<FileSet> filesets = []
-
-
-	private int transferred = 0
-	private int skipped = 0
 
 	public void fileset(String dirName, Closure cl) {
 		fileset(ant.fileset(dir: dirName, cl))
@@ -196,11 +194,8 @@ public class FtpTask extends DefaultTask {
      * For each file in the fileset, do the appropriate action: send, get,
      * delete, or list.
      *
-     * @param ftp the FtpAdapter instance used to perform FTP actions
      * @param fs the fileset on which the actions are performed.
-     *
      * @return the number of files to be transferred.
-     *
      * @throws IOException if there is a problem reading a file
      * @throws GradleException if there is a problem in the configuration.
      */
@@ -236,8 +231,8 @@ public class FtpTask extends DefaultTask {
 			                ftpAdapter.listFile(listing, file.relativePath)
 			                break
 		                case Action.CHMOD:
-			                ftpAdapter.doSiteCommand("chmod ${chmod} ${resolveFile(file.relativePath)}")
-			                transferred++
+			                ftpAdapter.chmod(chmod, file.relativePath)
+			                // TODO: transferred++
 			                break
 		                default:
 			                throw new GradleException("unknown ftp action ${action}")
@@ -254,15 +249,10 @@ public class FtpTask extends DefaultTask {
     /**
      * Sends all files specified by the configured filesets to the remote server.
      *
-     * @param ftp the FTPClient instance used to perform FTP actions
-     *
      * @throws IOException if there is a problem reading a file
      * @throws GradleException if there is a problem in the configuration.
      */
     protected void transferFiles() throws IOException, GradleException {
-        transferred = 0
-        skipped = 0
-
 	    List<TransferableFile> filesToTransfer = getFilesToTransfer()
 	    if (filesToTransfer.isEmpty()) {
 		    throw new GradleException("at least one fileset must be specified.")
@@ -270,17 +260,11 @@ public class FtpTask extends DefaultTask {
 
 	    transferFiles(filesToTransfer)
 
-        log.info("${transferred} ${action.targetString} ${action.completedString}")
-        if (skipped != 0) {
-            log.info("${skipped} ${action.targetString} were not successfully ${action.completedString}")
+        log.info("${ftpAdapter.transferred} ${action.targetString} ${action.completedString}")
+        if (ftpAdapter.skipped != 0) {
+            log.info("${ftpAdapter.skipped} ${action.targetString} were not successfully ${action.completedString}")
         }
     }
-
-	@EqualsAndHashCode
-	private static class TransferableFile {
-		String baseDir
-		String relativePath
-	}
 
 	private List<TransferableFile> getFilesToTransfer() {
 		List<TransferableFile> filesToTransfer = []
@@ -293,10 +277,10 @@ public class FtpTask extends DefaultTask {
 	private List<TransferableFile> getFilesToTransfer(FileSet fileset) {
 		DirectoryScanner ds
 		if (action == Action.SEND_FILES) {
-			ds = fileset.getDirectoryScanner(getAntProject())
+			ds = fileset.getDirectoryScanner(project.ant.project)
 		} else {
-			ds = new FtpDirectoryScanner(ftpAdapter.ftp, remoteDir, remoteFileSep)
-			fileset.setupDirectoryScanner(ds, getAntProject())
+			ds = ftpAdapter.getRemoteDirectoryScanner(remoteDir)
+			fileset.setupDirectoryScanner(ds, project.ant.project)
 			ds.setFollowSymlinks(fileset.isFollowSymlinks())
 			ds.scan()
 		}
@@ -329,68 +313,25 @@ public class FtpTask extends DefaultTask {
      * spec - no attempt is made to change directories. It is anticipated that
      * this may eventually cause problems with some FTP servers, but it
      * simplifies the coding.
-     * @param ftp ftp client
      * @param dir base directory of the file to be sent (local)
-     * @param filename relative path of the file to be send
-     *        locally relative to dir
+     * @param filename relative path of the file to be send locally relative to dir
      *        remotely relative to the remotedir attribute
      */
-    protected void sendFile(String dir, String filename) {
-        InputStream instream = null
-	    FTPClient ftpClient = ftpAdapter.ftp
-	    String remoteFilePath = ftpAdapter.resolveRemotePath(filename)
+    private void sendFile(String dir, String filename) {
+	    try {
+		    if (newerOnly && ftpAdapter.isRemoteFileOlder(dir, filename)) {
+			    return
+		    }
+	    } catch (GradleException ex) {
+		    log.debug("Could not date test remote file: ${filename} assuming out of date.")
+	    }
 
-        try {
-	        // TODO - why not simply new File(dir, filename)?
-	        File file = getAntProject().resolveFile(new File(dir, filename).getPath())
-
-	        try {
-		        if (newerOnly && ftpAdapter.isRemoteFileOlder(file, remoteFilePath)) {
-			        return
-		        }
-	        } catch(GradleException ex) {
-		        log.debug("Could not date test remote file: ${remoteFilePath} assuming out of date.")
-	        }
-
-            if (verbose) {
-                log.info("transferring ${file.getAbsolutePath()}")
-            }
-
-            instream = new BufferedInputStream(new FileInputStream(file))
-
-            ftpAdapter.createParents(filename)
-
-            ftpClient.storeFile(remoteFilePath, instream)
-
-            boolean success = FTPReply.isPositiveCompletion(ftpClient.getReplyCode())
-
-            if (!success) {
-                String s = "could not put file: " + ftpClient.getReplyString()
-
-                if (skipFailedTransfers) {
-                    log.warn(s)
-                    skipped++
-                } else {
-                    throw new GradleException(s)
-                }
-
-            } else {
-                // see if we should issue a chmod command
-                if (chmod != null) {
-                    ftpAdapter.doSiteCommand("chmod ${chmod} ${remoteFilePath}")
-                }
-                log.debug("File ${file.getAbsolutePath()} copied to ${server}")
-                transferred++
-            }
-        } finally {
-            FileUtils.close(instream)
+	    boolean success = ftpAdapter.sendFile(dir, filename)
+        // see if we should issue a chmod command
+        if (success && (chmod != null)) {
+	        ftpAdapter.chmod(chmod, filename)
         }
     }
-
-
-	private org.apache.tools.ant.Project getAntProject() {
-		project.ant.project
-	}
 
     /**
      * Retrieve a single file from the remote host. <code>filename</code> may
@@ -406,59 +347,21 @@ public class FtpTask extends DefaultTask {
      * @throws GradleException if skipFailedTransfers is false
      * and the file cannot be retrieved.
      */
-    protected void getFile(String dir, String filename) throws GradleException {
-        OutputStream outstream = null
-	    FTPClient ftpClient = ftpAdapter.ftp
-	    String remoteFilePath = ftpAdapter.resolveRemotePath(filename)
+	private void getFile(String dir, String filename) throws GradleException {
+		if (newerOnly && ftpAdapter.isLocalFileOlder(dir, filename)) {
+			return
+		}
 
-        try {
-	        File file = getAntProject().resolveFile(new File(dir, filename).getPath())
+		File transferredFile = ftpAdapter.getFile(dir, filename)
+		if (preserveLastModified && (transferredFile != null)) {
+			FTPFile[] remote = ftpAdapter.listFiles(filename)
+			if (remote.length > 0) {
+				transferredFile.setLastModified(remote[0].getTimestamp().getTime().getTime())
+			}
+		}
+	}
 
-            if (newerOnly && ftpAdapter.isLocalFileOlder(file, remoteFilePath)) {
-                return
-            }
-
-            if (verbose) {
-                log.info("transferring ${filename} to ${file.getAbsolutePath()}")
-            }
-
-            File pdir = file.getParentFile()
-
-            if (!pdir.exists()) {
-                pdir.mkdirs()
-            }
-            outstream = new BufferedOutputStream(new FileOutputStream(file))
-            ftpClient.retrieveFile(remoteFilePath, outstream)
-
-            if (!FTPReply.isPositiveCompletion(ftpClient.getReplyCode())) {
-                String s = "could not get file: " + ftpClient.getReplyString()
-
-                if (skipFailedTransfers) {
-                    log.warn(s)
-                    skipped++
-                } else {
-                    throw new GradleException(s)
-                }
-
-            } else {
-                log.debug("File ${file.getAbsolutePath()} copied from ${server}")
-                transferred++
-                if (preserveLastModified) {
-                    outstream.close()
-                    outstream = null
-                    FTPFile[] remote = ftpClient.listFiles(remoteFilePath)
-                    if (remote.length > 0) {
-	                    file.setLastModified(remote[0].getTimestamp().getTime().getTime())
-                    }
-                }
-            }
-        } finally {
-            FileUtils.close(outstream)
-        }
-    }
-
-
-    /**
+	/**
      * Runs the task.
      *
      * @throws GradleException if the task fails or is not configured correctly.
@@ -474,7 +377,7 @@ public class FtpTask extends DefaultTask {
             // directory is the directory to create.
             if (action == Action.MK_DIR) {
 	            // TODO: retryable
-	            ftpAdapter.makeRemoteDir(remoteDir)
+	            ftpAdapter.mkDir(remoteDir)
             } else if (action == Action.SITE_CMD) {
 	            // TODO: retryable
 	            ftpAdapter.doSiteCommand(siteCommand)

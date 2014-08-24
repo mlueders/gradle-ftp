@@ -6,6 +6,8 @@ import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPClientConfig
 import org.apache.commons.net.ftp.FTPFile
 import org.apache.commons.net.ftp.FTPReply
+import org.apache.tools.ant.DirectoryScanner
+import org.apache.tools.ant.util.FileUtils
 import org.gradle.api.GradleException
 
 @Slf4j
@@ -109,16 +111,12 @@ class FtpAdapter {
 		this.lastModifiedChecker = new LastModifiedChecker(ftp)
 	}
 
-	private void checkAttributes() throws GradleException {
-		if (server == null) {
-			throw new GradleException("server attribute must be set!")
-		}
-		if (userId == null) {
-			throw new GradleException("userId attribute must be set!")
-		}
-		if (password == null) {
-			throw new GradleException("password attribute must be set!")
-		}
+	public int getTransferred() {
+		transferred
+	}
+
+	public int getSkipped() {
+		skipped
 	}
 
 	void open() {
@@ -133,7 +131,7 @@ class FtpAdapter {
 		log.debug("opening FTP connection to ${server}")
 		ftp.setRemoteVerificationEnabled(enableRemoteVerification)
 		ftp.connect(server, port)
-		if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
+		if (!isPositiveCompletion()) {
 			throw new GradleException("FTP connection failed: ${ftp.getReplyString()}")
 		}
 
@@ -146,14 +144,14 @@ class FtpAdapter {
 		log.debug("login succeeded")
 		int fileType = binary ? FTP.BINARY_FILE_TYPE : FTP.ASCII_FILE_TYPE
 		ftp.setFileType(fileType)
-		if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
+		if (!isPositiveCompletion()) {
 			throw new GradleException("could not set transfer type: ${ftp.getReplyString()}")
 		}
 
 		if (passive) {
 			log.debug("entering passive mode")
 			ftp.enterLocalPassiveMode()
-			if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
+			if (!isPositiveCompletion()) {
 				throw new GradleException("could not enter into passive mode: ${ftp.getReplyString()}")
 			}
 		}
@@ -173,6 +171,18 @@ class FtpAdapter {
 		}
 	}
 
+	private void checkAttributes() throws GradleException {
+		if (server == null) {
+			throw new GradleException("server attribute must be set!")
+		}
+		if (userId == null) {
+			throw new GradleException("userId attribute must be set!")
+		}
+		if (password == null) {
+			throw new GradleException("password attribute must be set!")
+		}
+	}
+
 	void close() {
 		if (ftp.isConnected()) {
 			try {
@@ -185,22 +195,26 @@ class FtpAdapter {
 		}
 	}
 
+	boolean isPositiveCompletion() {
+		FTPReply.isPositiveCompletion(ftp.getReplyCode())
+	}
+
+	void chmod(String chmod, String filename) {
+		String remoteFilePath = resolveRemotePath(filename)
+		doSiteCommand("chmod ${chmod} ${remoteFilePath}")
+	}
+
 	/**
 	 * Sends a site command to the ftp server
 	 * @param theCMD command to execute
 	 */
 	void doSiteCommand(String theCMD) {
-		boolean rc
-		String[] myReply
-
 		log.debug("Doing Site Command: ${theCMD}")
 
-		rc = ftp.sendSiteCommand(theCMD)
-
-		if (!rc) {
+		if (!ftp.sendSiteCommand(theCMD)) {
 			log.warn("Failed to issue Site Command: ${theCMD}")
 		} else {
-			myReply = ftp.getReplyStrings()
+			String[] myReply = ftp.getReplyStrings()
 
 			for (int x = 0; x < myReply.length; x++) {
 				if (myReply[x] != null && myReply[x].indexOf("200") == -1) {
@@ -220,7 +234,7 @@ class FtpAdapter {
 	 *         already existing. Precisely, the codes 521, 550 and 553 will trigger
 	 *         a GradleException
 	 */
-	void makeRemoteDir(String dir) throws GradleException {
+	void mkDir(String dir) throws GradleException {
 		String workingDirectory = ftp.printWorkingDirectory()
 		if (verbose) {
 			if (dir.startsWith("/") || workingDirectory == null) {
@@ -257,6 +271,225 @@ class FtpAdapter {
 	}
 
 	/**
+	 * look at the response for a failed mkdir action, decide whether
+	 * it matters or not. If it does, we throw an exception
+	 * @throws GradleException if this is an error to signal
+	 */
+	private void handleMkDirFailure() throws GradleException {
+		int rc = ftp.getReplyCode()
+		if (!(ignoreNoncriticalErrors && DIRECTORY_ALREADY_EXISTS_RETURN_CODES.contains(rc))) {
+			throw new GradleException("could not create directory: ${ftp.getReplyString()}")
+		}
+	}
+
+	void changeWorkingDirectory(String workingDir) {
+		log.debug("changing the remote directory to ${workingDir}")
+		ftp.changeWorkingDirectory(workingDir)
+		if (!isPositiveCompletion()) {
+			throw new GradleException("could not change remote directory: ${ftp.getReplyString()}")
+		}
+	}
+
+	/**
+	 * Delete a directory, if empty, from the remote host.
+	 * @param dirpath directory to delete
+	 * @throws GradleException if skipFailedTransfers is set to false and the deletion could not be done
+	 */
+	void rmDir(String dirpath) throws GradleException {
+		if (verbose) {
+			log.info("removing ${dirpath}")
+		}
+
+		if (!ftp.removeDirectory(resolveRemotePath(dirpath))) {
+			String s = "could not remove directory: ${ftp.getReplyString()}"
+
+			if (skipFailedTransfers) {
+				skipped++
+				log.warn(s)
+			} else {
+				throw new GradleException(s)
+			}
+		} else {
+			log.debug("Directory ${dirpath} removed from ${server}")
+			transferred++
+		}
+	}
+
+	/**
+	 * Correct a file path to correspond to the remote host requirements. This
+	 * implementation currently assumes that the remote end can handle
+	 * Unix-style paths with forward-slash separators. This can be overridden
+	 * with the <code>separator</code> task parameter. No attempt is made to
+	 * determine what syntax is appropriate for the remote host.
+	 *
+	 * @param file the remote file name to be resolved
+	 *
+	 * @return the filename as it will appear on the server.
+	 */
+	private String resolveRemotePath(String file) {
+		return file.replace(LINE_SEPARATOR, remoteFileSep)
+	}
+
+	/**
+	 * List information about a single file from the remote host. <code>filename</code>
+	 * may contain a relative path specification. <p>
+	 *
+	 * The file listing will then be retrieved using the entire relative path
+	 * spec - no attempt is made to change directories. It is anticipated that
+	 * this may eventually cause problems with some FTP servers, but it
+	 * simplifies the coding.</p>
+	 * @param bw buffered writer
+	 * @param filename the directory one wants to list
+	 */
+	void listFile(File listingFile, String filename) {
+		listingFile.getParentFile().mkdirs()
+
+		if (verbose) {
+			log.info("listing ${filename}")
+		}
+
+		FTPFile[] ftpfiles = listFiles(filename)
+		if (ftpfiles != null && ftpfiles.length > 0) {
+			listingFile << "${ftpfiles[0].toString()}${LINE_SEPARATOR}"
+			transferred++
+		}
+	}
+
+	FTPFile[] listFiles(String filename) {
+		String remotePath = resolveRemotePath(filename)
+		ftp.listFiles(remotePath)
+	}
+
+	/**
+	 * Delete a file from the remote host.
+	 * @param filename file to delete
+	 * @throws GradleException if skipFailedTransfers is set to false
+	 * and the deletion could not be done
+	 */
+	void deleteFile(String filename) throws GradleException {
+		if (verbose) {
+			log.info("deleting ${filename}")
+		}
+
+		if (!ftp.deleteFile(resolveRemotePath(filename))) {
+			String s = "could not delete file: " + ftp.getReplyString()
+
+			if (skipFailedTransfers) {
+				log.warn(s)
+				skipped++
+			} else {
+				throw new GradleException(s)
+			}
+		} else {
+			log.debug("File ${filename} deleted from ${server}")
+			transferred++
+		}
+	}
+
+	/**
+	 * Retrieve a single file from the remote host. <code>filename</code> may
+	 * contain a relative path specification. <p>
+	 *
+	 * The file will then be retrieved using the entire relative path spec -
+	 * no attempt is made to change directories. It is anticipated that this
+	 * may eventually cause problems with some FTP servers, but it simplifies
+	 * the coding.</p>
+	 * @param dir local base directory to which the file should go back
+	 * @param filename relative path of the file based upon the ftp remote directory
+	 *        and/or the local base directory (dir)
+	 * @return the transferred File on successful transfer, null otherwise
+	 * @throws GradleException if skipFailedTransfers is false and the file cannot be retrieved.
+	 */
+	File getFile(String dir, String filename) throws GradleException {
+		String remoteFilePath = resolveRemotePath(filename)
+		File transferredFile = null
+
+		OutputStream outstream = null
+		try {
+			File file = new File(dir, filename)
+
+			if (verbose) {
+				log.info("transferring ${filename} to ${file.getAbsolutePath()}")
+			}
+
+			file.parentFile.mkdirs()
+
+			outstream = new BufferedOutputStream(new FileOutputStream(file))
+			ftp.retrieveFile(remoteFilePath, outstream)
+
+			if (!isPositiveCompletion()) {
+				String s = "could not get file: " + ftp.getReplyString()
+
+				if (skipFailedTransfers) {
+					log.warn(s)
+					skipped++
+				} else {
+					throw new GradleException(s)
+				}
+
+			} else {
+				log.debug("File ${file.getAbsolutePath()} copied from ${server}")
+				transferredFile = file
+				transferred++
+			}
+		} finally {
+			FileUtils.close(outstream)
+		}
+		transferredFile
+	}
+
+	/**
+	 * Sends a single file to the remote host. <code>filename</code> may
+	 * contain a relative path specification. When this is the case, <code>sendFile</code>
+	 * will attempt to create any necessary parent directories before sending
+	 * the file. The file will then be sent using the entire relative path
+	 * spec - no attempt is made to change directories. It is anticipated that
+	 * this may eventually cause problems with some FTP servers, but it
+	 * simplifies the coding.
+	 * @param ftp ftp client
+	 * @param dir base directory of the file to be sent (local)
+	 * @param filename relative path of the file to be send
+	 *        locally relative to dir
+	 *        remotely relative to the remotedir attribute
+	 */
+	boolean sendFile(String dir, String filename) {
+		File file = new File(dir, filename)
+		String remoteFilePath = resolveRemotePath(filename)
+		boolean success = false
+
+		if (verbose) {
+			log.info("transferring ${file.getAbsolutePath()}")
+		}
+
+		InputStream instream = null
+		try {
+			createParents(filename)
+
+			instream = new BufferedInputStream(new FileInputStream(file))
+			ftp.storeFile(remoteFilePath, instream)
+
+			success = isPositiveCompletion()
+			if (!success) {
+				String s = "could not put file: " + ftp.getReplyString()
+
+				if (skipFailedTransfers) {
+					log.warn(s)
+					skipped++
+				} else {
+					throw new GradleException(s)
+				}
+
+			} else {
+				log.debug("File ${file.getAbsolutePath()} copied to ${server}")
+				transferred++
+			}
+		} finally {
+			FileUtils.close(instream)
+		}
+		success
+	}
+
+	/**
 	 * Creates all parent directories specified in a complete relative
 	 * pathname. Attempts to create existing directories will not cause
 	 * errors.
@@ -267,7 +500,7 @@ class FtpAdapter {
 	 * @throws GradleException if it is impossible to cd to a remote directory
 	 *
 	 */
-	void createParents(String filename) throws GradleException {
+	private void createParents(String filename) throws GradleException {
 		File dir = new File(filename)
 		if (dirCache.contains(dir)) {
 			return
@@ -316,129 +549,24 @@ class FtpAdapter {
 		}
 	}
 
-	/**
-	 * look at the response for a failed mkdir action, decide whether
-	 * it matters or not. If it does, we throw an exception
-	 * @throws GradleException if this is an error to signal
-	 */
-	private void handleMkDirFailure() throws GradleException {
-		int rc = ftp.getReplyCode()
-		if (!(ignoreNoncriticalErrors && DIRECTORY_ALREADY_EXISTS_RETURN_CODES.contains(rc))) {
-			throw new GradleException("could not create directory: ${ftp.getReplyString()}")
-		}
+	DirectoryScanner getRemoteDirectoryScanner(String remoteDir) {
+		new FtpDirectoryScanner(ftp, remoteDir, remoteFileSep)
 	}
-
-
-	void changeWorkingDirectory(String workingDir) {
-		log.debug("changing the remote directory to ${workingDir}")
-		ftp.changeWorkingDirectory(workingDir)
-		if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
-			throw new GradleException("could not change remote directory: ${ftp.getReplyString()}")
-		}
-	}
-
-	/**
-	 * Delete a directory, if empty, from the remote host.
-	 * @param dirpath directory to delete
-	 * @throws GradleException if skipFailedTransfers is set to false and the deletion could not be done
-	 */
-	void rmDir(String dirpath) throws GradleException {
-		if (verbose) {
-			log.info("removing ${dirpath}")
-		}
-
-		if (!ftp.removeDirectory(resolveRemotePath(dirpath))) {
-			String s = "could not remove directory: ${ftp.getReplyString()}"
-
-			if (skipFailedTransfers) {
-				skipped++
-				log.warn(s)
-			} else {
-				throw new GradleException(s)
-			}
-		} else {
-			log.debug("Directory ${dirpath} removed from ${server}")
-			transferred++
-		}
-	}
-
-	/**
-	 * Correct a file path to correspond to the remote host requirements. This
-	 * implementation currently assumes that the remote end can handle
-	 * Unix-style paths with forward-slash separators. This can be overridden
-	 * with the <code>separator</code> task parameter. No attempt is made to
-	 * determine what syntax is appropriate for the remote host.
-	 *
-	 * @param file the remote file name to be resolved
-	 *
-	 * @return the filename as it will appear on the server.
-	 */
-	String resolveRemotePath(String file) {
-		return file.replace(LINE_SEPARATOR, remoteFileSep)
-	}
-
-	/**
-	 * List information about a single file from the remote host. <code>filename</code>
-	 * may contain a relative path specification. <p>
-	 *
-	 * The file listing will then be retrieved using the entire relative path
-	 * spec - no attempt is made to change directories. It is anticipated that
-	 * this may eventually cause problems with some FTP servers, but it
-	 * simplifies the coding.</p>
-	 * @param bw buffered writer
-	 * @param filename the directory one wants to list
-	 */
-	void listFile(File listingFile, String filename) {
-		listingFile.getParentFile().mkdirs()
-
-		if (verbose) {
-			log.info("listing ${filename}")
-		}
-
-		FTPFile[] ftpfiles = ftp.listFiles(resolveRemotePath(filename))
-		if (ftpfiles != null && ftpfiles.length > 0) {
-			listingFile << "${ftpfiles[0].toString()}${LINE_SEPARATOR}"
-			transferred++
-		}
-	}
-
-	/**
-	 * Delete a file from the remote host.
-	 * @param filename file to delete
-	 * @throws GradleException if skipFailedTransfers is set to false
-	 * and the deletion could not be done
-	 */
-	void deleteFile(String filename) throws GradleException {
-		if (verbose) {
-			log.info("deleting ${filename}")
-		}
-
-		if (!ftp.deleteFile(resolveRemotePath(filename))) {
-			String s = "could not delete file: " + ftp.getReplyString()
-
-			if (skipFailedTransfers) {
-				log.warn(s)
-				skipped++
-			} else {
-				throw new GradleException(s)
-			}
-		} else {
-			log.debug("File ${filename} deleted from ${server}")
-			transferred++
-		}
-	}
-
 
 	boolean setGranularityMillis(long granularityMillis) {
 		lastModifiedChecker.granularityMillis = granularityMillis
 	}
 
-	boolean isRemoteFileOlder(File localFile, String remotePath) {
-		lastModifiedChecker.isRemoteFileOlder(localFile, remotePath)
+	boolean isRemoteFileOlder(String dir, String filePath) {
+		File localFile = new File(dir, filePath)
+		String remoteFilePath = resolveRemotePath(filePath)
+		lastModifiedChecker.isRemoteFileOlder(localFile, remoteFilePath)
 	}
 
-	boolean isLocalFileOlder(File localFile, String remotePath) {
-		lastModifiedChecker.isLocalFileOlder(localFile, remotePath)
+	boolean isLocalFileOlder(String dir, String filePath) {
+		File localFile = new File(dir, filePath)
+		String remoteFilePath = resolveRemotePath(filePath)
+		lastModifiedChecker.isLocalFileOlder(localFile, remoteFilePath)
 	}
 
 }
