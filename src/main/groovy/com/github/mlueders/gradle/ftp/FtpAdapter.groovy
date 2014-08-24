@@ -86,6 +86,7 @@ class FtpAdapter {
 		String remoteFileSep = "/"
 	}
 
+
 	/** Default port for FTP */
 	private static final int DEFAULT_FTP_PORT = 21
 
@@ -101,9 +102,9 @@ class FtpAdapter {
 	private Config config
 	private FTPClient ftp
 	private LastModifiedChecker lastModifiedChecker
+	private Set dirCache = new HashSet()
 	private int transferred = 0
 	private int skipped = 0
-	private Set dirCache = new HashSet()
 
 	public FtpAdapter(Config config) {
 		this.config = config
@@ -119,8 +120,10 @@ class FtpAdapter {
 		skipped
 	}
 
-	void open() {
+	void open(RetryHandler retryHandler) {
 		checkAttributes()
+		skipped = 0
+		transferred = 0
 
 		if (clientConfig) {
 			ftp.configure(clientConfig)
@@ -160,14 +163,16 @@ class FtpAdapter {
 		// Some FTP servers offer different modes of operation,
 		// E.G. switching between a UNIX file system mode and a legacy file system.
 		if (this.initialSiteCommand != null) {
-			// TODO: retryable
-			doSiteCommand(initialSiteCommand)
+			retryHandler.execute("initial site command: ${initialSiteCommand}", log) {
+				doSiteCommand(initialSiteCommand)
+			}
 		}
 
 		// For a unix ftp server you can set the default mask for all files created.
 		if (umask != null) {
-			// TODO: retryable
-			doSiteCommand("umask " + umask)
+			retryHandler.execute("umask ${umask}", log) {
+				doSiteCommand("umask ${umask}")
+			}
 		}
 	}
 
@@ -284,8 +289,7 @@ class FtpAdapter {
 
 	void changeWorkingDirectory(String workingDir) {
 		log.debug("changing the remote directory to ${workingDir}")
-		ftp.changeWorkingDirectory(workingDir)
-		if (!isPositiveCompletion()) {
+		if (!ftp.changeWorkingDirectory(workingDir)) {
 			throw new GradleException("could not change remote directory: ${ftp.getReplyString()}")
 		}
 	}
@@ -446,7 +450,6 @@ class FtpAdapter {
 	 * spec - no attempt is made to change directories. It is anticipated that
 	 * this may eventually cause problems with some FTP servers, but it
 	 * simplifies the coding.
-	 * @param ftp ftp client
 	 * @param dir base directory of the file to be sent (local)
 	 * @param filename relative path of the file to be send
 	 *        locally relative to dir
@@ -494,8 +497,6 @@ class FtpAdapter {
 	 * pathname. Attempts to create existing directories will not cause
 	 * errors.
 	 *
-	 * @param ftp the FTP client instance to use to execute FTP actions on
-	 *        the remote server.
 	 * @param filename the name of the file whose parents should be created.
 	 * @throws GradleException if it is impossible to cd to a remote directory
 	 *

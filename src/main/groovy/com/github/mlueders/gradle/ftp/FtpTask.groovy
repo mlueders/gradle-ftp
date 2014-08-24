@@ -155,8 +155,9 @@ public class FtpTask extends DefaultTask {
 
 	@Delegate
 	private FtpAdapter.Config config = new FtpAdapter.Config()
-	private FtpAdapter ftpAdapter
+	protected FtpAdapter ftpAdapter
 	private List<FileSet> filesets = []
+	private RetryHandler retryHandler
 
 	public void fileset(String dirName, Closure cl) {
 		fileset(ant.fileset(dir: dirName, cl))
@@ -208,35 +209,37 @@ public class FtpTask extends DefaultTask {
                 // to remove directories, start by the end of the list
                 // the trunk does not let itself be removed before the leaves
 	            for (TransferableFile file : filesToTransfer.reverse()) {
-	                // TODO: retryable
-		            ftpAdapter.rmDir(file.relativePath)
+		            retryHandler.execute(file.relativePath) {
+			            ftpAdapter.rmDir(file.relativePath)
+		            }
                 }
             } else {
                 if (this.newerOnly) {
 	                ftpAdapter.granularityMillis = this.timestampGranularity.getMilliseconds(action)
                 }
 	            for (TransferableFile file : filesToTransfer) {
-	                // TODO: retryable
-	                switch (action) {
-		                case Action.SEND_FILES:
-			                sendFile(file.baseDir, file.relativePath)
-			                break
-		                case Action.GET_FILES:
-			                getFile(file.baseDir, file.relativePath)
-			                break
-		                case Action.DEL_FILES:
-			                ftpAdapter.deleteFile(file.relativePath)
-			                break
-		                case Action.LIST_FILES:
-			                ftpAdapter.listFile(listing, file.relativePath)
-			                break
-		                case Action.CHMOD:
-			                ftpAdapter.chmod(chmod, file.relativePath)
-			                // TODO: transferred++
-			                break
-		                default:
-			                throw new GradleException("unknown ftp action ${action}")
-	                }
+		            retryHandler.execute(file.relativePath) {
+			            switch (action) {
+				            case Action.SEND_FILES:
+					            sendFile(file.baseDir, file.relativePath)
+					            break
+				            case Action.GET_FILES:
+					            getFile(file.baseDir, file.relativePath)
+					            break
+				            case Action.DEL_FILES:
+					            ftpAdapter.deleteFile(file.relativePath)
+					            break
+				            case Action.LIST_FILES:
+					            ftpAdapter.listFile(listing, file.relativePath)
+					            break
+				            case Action.CHMOD:
+					            ftpAdapter.chmod(chmod, file.relativePath)
+					            // TODO: transferred++
+					            break
+				            default:
+					            throw new GradleException("unknown ftp action ${action}")
+			            }
+		            }
                 }
             }
         } finally {
@@ -317,7 +320,7 @@ public class FtpTask extends DefaultTask {
      * @param filename relative path of the file to be send locally relative to dir
      *        remotely relative to the remotedir attribute
      */
-    private void sendFile(String dir, String filename) {
+    protected void sendFile(String dir, String filename) {
 	    try {
 		    if (newerOnly && ftpAdapter.isRemoteFileOlder(dir, filename)) {
 			    return
@@ -347,7 +350,7 @@ public class FtpTask extends DefaultTask {
      * @throws GradleException if skipFailedTransfers is false
      * and the file cannot be retrieved.
      */
-	private void getFile(String dir, String filename) throws GradleException {
+	protected void getFile(String dir, String filename) throws GradleException {
 		if (newerOnly && ftpAdapter.isLocalFileOlder(dir, filename)) {
 			return
 		}
@@ -369,18 +372,21 @@ public class FtpTask extends DefaultTask {
     public void executeTask() throws GradleException {
 	    checkAttributes()
 	    ftpAdapter = new FtpAdapter(config)
+	    retryHandler = new RetryHandler(retriesAllowed, log)
 
         try {
-	        ftpAdapter.open()
+	        ftpAdapter.open(retryHandler)
 
             // If the action is Action.MK_DIR, then the specified remote
             // directory is the directory to create.
             if (action == Action.MK_DIR) {
-	            // TODO: retryable
-	            ftpAdapter.mkDir(remoteDir)
+	            retryHandler.execute(remoteDir) {
+		            ftpAdapter.mkDir(remoteDir)
+	            }
             } else if (action == Action.SITE_CMD) {
-	            // TODO: retryable
-	            ftpAdapter.doSiteCommand(siteCommand)
+	            retryHandler.execute("Site Command: ${siteCommand}") {
+		            ftpAdapter.doSiteCommand(siteCommand)
+	            }
             } else {
                 if (remoteDir != null) {
 	                ftpAdapter.changeWorkingDirectory(remoteDir)

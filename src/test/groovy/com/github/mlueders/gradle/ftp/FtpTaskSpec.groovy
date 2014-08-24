@@ -183,6 +183,19 @@ class FtpTaskSpec extends AbstractProjectSpecification {
 		assert entry.isDirectory()
 	}
 
+	def "mkdir should construct hierarchy"() {
+		given:
+		ftpTask.action = FtpTask.Action.MK_DIR
+		ftpTask.remoteDir = 'new-dir/new-sub-dir'
+
+		when:
+		ftpTask.executeTask()
+
+		then:
+		FileSystemEntry entry = ftpFileSystem.getEntry(ftpBaseDir.file('new-dir').file('new-sub-dir').path)
+		assert entry.isDirectory()
+	}
+
 	def 'rmdir'() {
 		given:
 		ftpFileSystem.add(new DirectoryEntry(ftpBaseDir.file('some-dir').absolutePath))
