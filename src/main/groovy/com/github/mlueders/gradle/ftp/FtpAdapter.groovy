@@ -207,6 +207,7 @@ class FtpAdapter {
 	void chmod(String chmod, String filename) {
 		String remoteFilePath = resolveRemotePath(filename)
 		doSiteCommand("chmod ${chmod} ${remoteFilePath}")
+		transferred++
 	}
 
 	/**

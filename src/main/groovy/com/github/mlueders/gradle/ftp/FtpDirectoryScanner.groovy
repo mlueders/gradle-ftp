@@ -143,8 +143,7 @@ class FtpDirectoryScanner extends DirectoryScanner {
 					}
 
 					if (myfile.isDirectory()) {
-						if (isIncluded(currentelement)
-								&& currentelement.length() > 0) {
+						if (isIncluded(currentelement) && currentelement.length() > 0) {
 							accountForIncludedDir(currentelement, myfile, true)
 						} else {
 							if (currentelement.length() > 0) {
@@ -207,18 +206,15 @@ class FtpDirectoryScanner extends DirectoryScanner {
 							dirsExcluded.addElement(name)
 							slowScanAllowed = false
 						} else if (isIncluded(name)) {
-							accountForIncludedDir(name,
-									new AntFTPFile(ftp, file, completePath), fast)
+							accountForIncludedDir(name, new AntFTPFile(ftp, file, completePath), fast)
 						} else {
 							dirsNotIncluded.addElement(name)
 							if (fast && couldHoldIncluded(name)) {
-								scandir(file.getName(),
-										name + File.separator, fast)
+								scandir(file.getName(), name + File.separator, fast)
 							}
 						}
 						if (!fast && slowScanAllowed) {
-							scandir(file.getName(),
-									name + File.separator, fast)
+							scandir(file.getName(), name + File.separator, fast)
 						}
 					} else {
 						if (!isFollowSymlinks() && file.isSymbolicLink()) {
@@ -550,16 +546,14 @@ class FtpDirectoryScanner extends DirectoryScanner {
 					boolean result = this.client.changeWorkingDirectory(currentPathElement)
 					if (!result && !isCaseSensitive()
 							&& (remoteSystemCaseSensitive || !remoteSensitivityChecked)) {
-						currentPathElement = findPathElementCaseUnsensitive(this.curpwd,
-								currentPathElement)
+						currentPathElement = findPathElementCaseUnsensitive(this.curpwd, currentPathElement)
 						if (currentPathElement == null) {
 							return
 						}
 					} else if (!result) {
 						return
 					}
-					this.curpwd = getCurpwdPlusFileSep()
-					+currentPathElement
+					this.curpwd = getCurpwdPlusFileSep() + currentPathElement
 				} catch (IOException ioe) {
 					String toPath = pathElements.elementAt(fcount)
 					throw new GradleException("could not change working dir to ${toPath} from ${curpwd}", ioe)
@@ -649,8 +643,7 @@ class FtpDirectoryScanner extends DirectoryScanner {
 			if (!relativePathCalculated) {
 				if (parent != null) {
 					traversesSymlinks = parent.isTraverseSymlinks()
-					relativePath = doGetRelativePath(parent.getAbsolutePath(),
-							parent.getRelativePath())
+					relativePath = doGetRelativePath(parent.getAbsolutePath(), parent.getRelativePath())
 				} else {
 					relativePath = doGetRelativePath(rootPath, "")
 					relativePathCalculated = true
@@ -710,8 +703,7 @@ class FtpDirectoryScanner extends DirectoryScanner {
 					if (theFiles[fcount].getName().equals(lastpathelement)) {
 						return theFiles[fcount]
 					} else if (!isCaseSensitive()
-							&& theFiles[fcount].getName().equalsIgnoreCase(
-							lastpathelement)) {
+							&& theFiles[fcount].getName().equalsIgnoreCase(lastpathelement)) {
 						return theFiles[fcount]
 					}
 				}
@@ -765,8 +757,7 @@ class FtpDirectoryScanner extends DirectoryScanner {
 		 * @since Ant 1.8.2
 		 */
 		public String getCurpwdPlusFileSep() {
-			return curpwd.endsWith(remoteFileSep) ? curpwd
-					: curpwd + remoteFileSep
+			return curpwd.endsWith(remoteFileSep) ? curpwd : curpwd + remoteFileSep
 		}
 		/**
 		 * find out if a symbolic link is encountered in the relative path of this file
