@@ -1,6 +1,8 @@
 package com.github.mlueders.gradle.ftp.tasks
 
+import groovy.io.FileType
 import org.gradle.api.GradleException
+import spock.lang.Unroll
 
 class ChmodFtpTaskSpec extends AbstractFtpTaskSpec<ChmodFtpTask> {
 
@@ -46,6 +48,29 @@ class ChmodFtpTaskSpec extends AbstractFtpTaskSpec<ChmodFtpTask> {
 
 		then:
 		getLoggedSiteCommands() == ["SITE chmod 644 file1", "SITE chmod 644 file2"]
+	}
+
+	@Unroll
+	def "should change mode of #fileType when configured"() {
+		given:
+		addFtpFile(ftpBaseDir.file('dir/subdir/file'))
+		ftpTask.fileType = fileType
+		ftpTask.chmod = "755"
+		ftpTask.fileset {
+			include(name: 'dir/**')
+		}
+
+		when:
+		ftpTask.executeFtpTask()
+
+		then:
+		getLoggedSiteCommands().sort() == expectedSiteCommands
+
+		where:
+		fileType             | expectedSiteCommands
+		FileType.FILES       | ["SITE chmod 755 dir/subdir/file"]
+		FileType.DIRECTORIES | ["SITE chmod 755 dir", "SITE chmod 755 dir/subdir"]
+		FileType.ANY         | ["SITE chmod 755 dir", "SITE chmod 755 dir/subdir", "SITE chmod 755 dir/subdir/file"]
 	}
 
 }
