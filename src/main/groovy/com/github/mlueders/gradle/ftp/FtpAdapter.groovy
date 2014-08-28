@@ -555,20 +555,26 @@ class FtpAdapter {
 		new FtpDirectoryScanner(ftp, remoteDir, remoteFileSep)
 	}
 
-	boolean setGranularityMillis(long granularityMillis) {
-		lastModifiedChecker.granularityMillis = granularityMillis
+	/**
+	 * @see com.github.mlueders.gradle.ftp.LastModifiedChecker#timeDiffAuto
+	 */
+	void setTimeDiffAuto(boolean timeDiffAuto) {
+		lastModifiedChecker.setTimeDiffAuto(timeDiffAuto)
 	}
 
-	boolean isRemoteFileOlder(String dir, String filePath) {
-		File localFile = new File(dir, filePath)
+	/**
+	 * Retrieve an object which encapsulates the last modified times of a file, both local and remote
+	 * @return An instance for detecting whether the local or remote file is older or null if either there
+	 * was no remote file or the last modification time could not be established
+	 */
+	LastModifiedCheck getLastModifiedCheck(String localDir, String filePath, TimestampGranularity granularity) {
+		File localFile = new File(localDir, filePath)
 		String remoteFilePath = resolveRemotePath(filePath)
-		lastModifiedChecker.isRemoteFileOlder(localFile, remoteFilePath)
+		lastModifiedChecker.getLastModifiedCheck(localFile, remoteFilePath, granularity)
 	}
 
-	boolean isLocalFileOlder(String dir, String filePath) {
-		File localFile = new File(dir, filePath)
-		String remoteFilePath = resolveRemotePath(filePath)
-		lastModifiedChecker.isLocalFileOlder(localFile, remoteFilePath)
+	String getFtpReplyString() {
+		ftp.getReplyString()
 	}
 
 }

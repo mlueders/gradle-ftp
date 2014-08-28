@@ -12,8 +12,10 @@ import org.mockftpserver.fake.filesystem.FileEntry
 import org.mockftpserver.fake.filesystem.FileSystem
 import org.mockftpserver.fake.filesystem.FileSystemEntry
 import org.mockftpserver.fake.filesystem.UnixFakeFileSystem
+import spock.lang.Ignore
 import spock.lang.Unroll
 
+@Ignore
 class FtpTaskSpec extends AbstractProjectSpecification {
 
 	/**

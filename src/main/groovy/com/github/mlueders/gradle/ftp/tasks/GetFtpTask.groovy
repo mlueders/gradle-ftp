@@ -1,7 +1,9 @@
 package com.github.mlueders.gradle.ftp.tasks
 
 import com.github.mlueders.gradle.ftp.FtpAdapter
+import com.github.mlueders.gradle.ftp.LastModifiedCheck
 import com.github.mlueders.gradle.ftp.RetryHandler
+import com.github.mlueders.gradle.ftp.TimestampGranularity
 import org.apache.commons.net.ftp.FTPFile
 import org.gradle.api.GradleException
 
@@ -10,7 +12,7 @@ class GetFtpTask extends AbstractFtpTask {
 	/**
 	 * If true, transmit only files that are new or changed from their remote counterparts.
 	 * Defaults to false, transmit all files.
-	 * See the related attributes <code>timeDiffMillis</code> and <code>timeDiffAuto</code>.
+	 * See the related attributes <code>timeDiffAuto</code> and <code>timeDiffAuto</code>.
 	 * @see com.github.mlueders.gradle.ftp.LastModifiedChecker
 	 */
 	boolean newerOnly = false
@@ -21,9 +23,20 @@ class GetFtpTask extends AbstractFtpTask {
 	boolean preserveLastModified = false
 	/**
 	 * Used in conjunction with <code>newerOnly</code>
-	 * @see TimestampGranularity
+	 * @see com.github.mlueders.gradle.ftp.TimestampGranularity
 	 */
 	TimestampGranularity timestampGranularity = TimestampGranularity.NONE
+	/**
+	 * @see com.github.mlueders.gradle.ftp.LastModifiedChecker#timeDiffAuto
+	 */
+	Boolean timeDiffAuto
+
+	@Override
+	protected void checkAttributes() {
+		if (newerOnly && (timestampGranularity == null)) {
+			throw new GradleException("timestampGranularity must be non-null if newOnly is true")
+		}
+	}
 
 	@Override
 	protected void onExecuteFtpTask(FtpFileProcessor processor, FtpAdapter ftpAdapter, RetryHandler retryHandler) {
@@ -32,8 +45,8 @@ class GetFtpTask extends AbstractFtpTask {
 		processor.completedString = "retrieved"
 		processor.actionString = "getting"
 
-		if (newerOnly) {
-			ftpAdapter.granularityMillis = timestampGranularity.getMilliseconds()
+		if (timeDiffAuto != null) {
+			ftpAdapter.setTimeDiffAuto(timeDiffAuto)
 		}
 
 		processor.transferFilesWithRetry { TransferableFile file ->
@@ -56,8 +69,14 @@ class GetFtpTask extends AbstractFtpTask {
 	 * and the file cannot be retrieved.
 	 */
 	protected void getFile(FtpAdapter ftpAdapter, String dir, String filename) throws GradleException {
-		if (newerOnly && ftpAdapter.isLocalFileOlder(dir, filename)) {
-			return
+		if (newerOnly) {
+			LastModifiedCheck lastModifiedCheck = ftpAdapter.getLastModifiedCheck(dir, filename, timestampGranularity)
+
+			if (lastModifiedCheck == null) {
+				throw new GradleException("could not date test remote file: ${ftpAdapter.getFtpReplyString()}")
+			} else if (lastModifiedCheck.isLocalFileOlder()) {
+				return
+			}
 		}
 
 		File transferredFile = ftpAdapter.getFile(dir, filename)

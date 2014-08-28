@@ -1,4 +1,4 @@
-package com.github.mlueders.gradle.ftp.tasks
+package com.github.mlueders.gradle.ftp
 
 /**
  * Represents one of the valid timestamp adjustment values

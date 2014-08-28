@@ -11,8 +11,7 @@ import org.gradle.api.GradleException
 class LastModifiedChecker {
 
 	/** Date formatter used in logging, note not thread safe! */
-	private static final SimpleDateFormat TIMESTAMP_LOGGING_SDF =
-			new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+	private static final SimpleDateFormat TIMESTAMP_LOGGING_SDF = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
 	private static String formatDate(long timestamp) {
 		synchronized (TIMESTAMP_LOGGING_SDF) {
@@ -21,10 +20,6 @@ class LastModifiedChecker {
 	}
 
 
-	/**
-	 * adjust uptodate calculations where server timestamps are HH:mm and client's are HH:mm:ss
-	 */
-	long granularityMillis = 0L
 	/**
 	 * Automatically determine the time difference between local and remote machine, defaults to false.
 	 *
@@ -35,55 +30,47 @@ class LastModifiedChecker {
 	private FTPClient ftp
 	/**
 	 * Number of milliseconds to add to the time on the remote machine to get the time on the local machine.
-	 * Use in conjunction with <code>newerOnly</code>
 	 */
-	private Long timeDiffMillis = null
+	private long timeDiffMillis = 0l
+	private boolean initialized = false
 
 	public LastModifiedChecker(FTPClient ftp) {
 		this.ftp = ftp
 	}
 
 	void initialize() {
-		timeDiffMillis = timeDiffAuto ? calculateTimeDiff() : 0l
-	}
+		if (timeDiffAuto) {
+			timeDiffMillis = calculateTimeDiff()
+		}
 
-	boolean isRemoteFileOlder(File localFile, String remotePath) {
-		def (long localTimestamp, long remoteTimestamp) = isUpToDate(localFile, remotePath)
-		localTimestamp < remoteTimestamp
-	}
-
-	boolean isLocalFileOlder(File localFile, String remotePath) {
-		def (long localTimestamp, long remoteTimestamp) = isUpToDate(localFile, remotePath)
-		remoteTimestamp < localTimestamp
+		initialized = true
 	}
 
 	/**
 	 * Checks to see if the remote file is current as compared with the local
 	 * file. Returns true if the target file is up to date.
-	 * @param ftp ftpclient
 	 * @param localFile local file
 	 * @param remoteFile remote file
-	 * @return true if the target file is up to date
-	 * @throws GradleException if the date of the remote files cannot be found and the action is
-	 * GET_FILES
+	 * @param granularity amount to adjust remote timestamp.  Useful when server timestamps
+	 * are HH:mm and client's are HH:mm:ss
+	 * @see TimestampGranularity
 	 */
-	private long[] isUpToDate(File localFile, String remoteFile) {
-		log.debug("checking date for ${remoteFile}")
+	LastModifiedCheck getLastModifiedCheck(File localFile, String remoteFilePath, TimestampGranularity granularity) {
+		log.debug("checking date for ${remoteFilePath}")
 
-		if (timeDiffMillis == null) {
+		if (!initialized) {
 			throw new IllegalStateException("Application error: must call initialize() before invoking isUpToDate")
 		}
 
-		FTPFile[] files = ftp.listFiles(remoteFile)
-		// For Microsoft's Ftp-Service an Array with length 0 is
-		// returned if configured to return listings in "MS-DOS"-Format
-		if (files == null || files.length == 0) {
-			throw new GradleException("could not date test remote file: ${ftp.getReplyString()}")
+		FTPFile remoteFile = getRemoteFile(remoteFilePath)
+		// either there was a problem or there was no corresponding remote file
+		if (remoteFile == null) {
+			return
 		}
 
-		long remoteTimestamp = files[0].getTimestamp().getTime().getTime()
+		long remoteTimestamp = remoteFile.getTimestamp().getTime().getTime()
 		long localTimestamp = localFile.lastModified()
-		long adjustedRemoteTimestamp = remoteTimestamp + timeDiffMillis + granularityMillis
+		long adjustedRemoteTimestamp = remoteTimestamp + timeDiffMillis + granularity.getMilliseconds()
 
 		log.debug("   [${formatDate(localTimestamp)}] local")
 		String message = "   [${formatDate(adjustedRemoteTimestamp)}] remote"
@@ -91,7 +78,18 @@ class LastModifiedChecker {
 			message += " - (raw: ${formatDate(remoteTimestamp)})"
 		}
 		log.debug(message)
-		[localTimestamp, adjustedRemoteTimestamp]
+		new LastModifiedCheck(localFile, remoteFilePath, localTimestamp, adjustedRemoteTimestamp)
+	}
+
+	private FTPFile getRemoteFile(String remoteFilePath) {
+		FTPFile[] files = ftp.listFiles(remoteFilePath)
+
+		// For Microsoft's Ftp-Service an Array with length 0 is
+		// returned if configured to return listings in "MS-DOS"-Format
+		if (files == null || files.length == 0) {
+			return null
+		}
+		files[0]
 	}
 
 	/**

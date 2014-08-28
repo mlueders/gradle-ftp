@@ -1,7 +1,9 @@
 package com.github.mlueders.gradle.ftp.tasks
 
 import com.github.mlueders.gradle.ftp.FtpAdapter
+import com.github.mlueders.gradle.ftp.LastModifiedCheck
 import com.github.mlueders.gradle.ftp.RetryHandler
+import com.github.mlueders.gradle.ftp.TimestampGranularity
 import groovy.util.logging.Slf4j
 import org.gradle.api.GradleException
 
@@ -15,15 +17,26 @@ class SendFtpTask extends AbstractFtpTask {
 	/**
 	 * If true, transmit only files that are new or changed from their remote counterparts.
 	 * Defaults to false, transmit all files.
-	 * See the related attributes <code>timeDiffMillis</code> and <code>timeDiffAuto</code>.
+	 * See the related attributes <code>timeDiffAuto</code> and <code>timeDiffAuto</code>.
 	 * @see com.github.mlueders.gradle.ftp.LastModifiedChecker
 	 */
 	boolean newerOnly = false
 	/**
 	 * Used in conjunction with <code>newerOnly</code>
-	 * @see TimestampGranularity
+	 * @see com.github.mlueders.gradle.ftp.TimestampGranularity
 	 */
 	TimestampGranularity timestampGranularity = TimestampGranularity.MINUTE
+	/**
+	 * @see com.github.mlueders.gradle.ftp.LastModifiedChecker#timeDiffAuto
+	 */
+	Boolean timeDiffAuto
+
+	@Override
+	protected void checkAttributes() {
+		if (newerOnly && (timestampGranularity == null)) {
+			throw new GradleException("timestampGranularity must be non-null if newOnly is true")
+		}
+	}
 
 	@Override
 	protected void onExecuteFtpTask(FtpFileProcessor processor, FtpAdapter ftpAdapter, RetryHandler retryHandler) {
@@ -33,8 +46,8 @@ class SendFtpTask extends AbstractFtpTask {
 		processor.completedString = "sent"
 		processor.actionString = "sending"
 
-		if (newerOnly) {
-			ftpAdapter.granularityMillis = timestampGranularity.getMilliseconds()
+		if (timeDiffAuto != null) {
+			ftpAdapter.setTimeDiffAuto(timeDiffAuto)
 		}
 
 		processor.transferFilesWithRetry { TransferableFile file ->
@@ -55,12 +68,14 @@ class SendFtpTask extends AbstractFtpTask {
 	 *        remotely relative to the remotedir attribute
 	 */
 	protected void sendFile(FtpAdapter ftpAdapter, String dir, String filename) {
-		try {
-			if (newerOnly && ftpAdapter.isRemoteFileOlder(dir, filename)) {
+		if (newerOnly) {
+			LastModifiedCheck lastModifiedCheck = ftpAdapter.getLastModifiedCheck(dir, filename, timestampGranularity)
+
+			if (lastModifiedCheck == null) {
+				log.debug("Could not date test remote file: ${filename} assuming out of date.")
+			} else if (lastModifiedCheck.isRemoteFileOlder()) {
 				return
 			}
-		} catch (GradleException ex) {
-			log.debug("Could not date test remote file: ${filename} assuming out of date.")
 		}
 
 		boolean success = ftpAdapter.sendFile(dir, filename)
